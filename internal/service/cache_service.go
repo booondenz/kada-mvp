@@ -94,7 +94,7 @@ func (cs *CacheService) GetLink(ctx context.Context, shortCode string) (*domain.
 //
 // 验收：go test ./internal/service/ -run TestCacheServiceSetLinkRespectsExpiry
 func (cs *CacheService) SetLink(ctx context.Context, info *domain.LinkInfo) {
-	todo.Panic("CacheService.SetLink")
+	todo.Stub("CacheService.SetLink")
 }
 
 // InvalidateLink 让一条链接的缓存失效。
@@ -111,7 +111,7 @@ func (cs *CacheService) SetLink(ctx context.Context, info *domain.LinkInfo) {
 //
 // 验收：go test ./internal/service/ -run TestCacheServiceInvalidateClearsBothKeys
 func (cs *CacheService) InvalidateLink(ctx context.Context, shortCode string) {
-	todo.Panic("CacheService.InvalidateLink")
+	todo.Stub("CacheService.InvalidateLink")
 }
 
 // missingKey 是"这个短码不存在"用的独立键（已给）。

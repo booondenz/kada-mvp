@@ -286,7 +286,7 @@ func (s *LinkService) BatchTag(ctx context.Context, ids []int64, tagID int64, us
 //
 // 验收：go test ./internal/service/ -run TestLogClick
 func (s *LinkService) LogClick(ctx context.Context, e domain.ClickEvent) {
-	todo.Panic("LinkService.LogClick")
+	todo.Stub("LinkService.LogClick")
 }
 
 // ==================== 内部方法（要你填的部分） ====================
@@ -316,14 +316,14 @@ func (s *LinkService) loadLink(ctx context.Context, shortCode string) (*domain.L
 //     ClearMissing 会把刚写进去的正向缓存一起删掉——它们是两个键，但顺序错了就白写）。
 //  3. SetLink。
 func (s *LinkService) cacheLink(ctx context.Context, info *domain.LinkInfo) {
-	todo.Panic("LinkService.cacheLink")
+	todo.Stub("LinkService.cacheLink")
 }
 
 // markMissing 记住"这个短码不存在"。
 //
 // TODO(练习 38)：实现它。s.cache == nil → 直接返回；否则 MarkMissing。
 func (s *LinkService) markMissing(ctx context.Context, shortCode string) {
-	todo.Panic("LinkService.markMissing")
+	todo.Stub("LinkService.markMissing")
 }
 
 // invalidate 让一个短码的缓存失效（已给）。
@@ -420,7 +420,7 @@ func (s *LinkService) validateOwnedRefs(ctx context.Context, userID int64, folde
 //     "ON CONFLICT DO NOTHING" 让重复打标签成为无害操作）。
 //  4. 忽略不属于该用户的 id，不要报错——更不要把别人的标签挂上去。
 func (s *LinkService) attachOwnedTags(ctx context.Context, userID, linkID int64, tagIDs []int64) {
-	todo.Panic("LinkService.attachOwnedTags")
+	todo.Stub("LinkService.attachOwnedTags")
 }
 
 // ==================== 已给的辅助函数 ====================
@@ -449,7 +449,7 @@ func isLinkUsable(info *domain.LinkInfo, now time.Time) bool {
 //
 // 验收：go test ./internal/service/ -run TestLinkInfoFromEntityHidesPasswordHash
 func (s *LinkService) linkInfoFromEntity(l *entity.Link) *domain.LinkInfo {
-	todo.Panic("LinkService.linkInfoFromEntity")
+	todo.Stub("LinkService.linkInfoFromEntity")
 	return nil
 }
 

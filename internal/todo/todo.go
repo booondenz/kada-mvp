@@ -12,7 +12,10 @@
 // 判据：`go test ./...` 里对应的验收测试从红变绿。
 package todo
 
-import "fmt"
+import (
+	"fmt"
+	"log"
+)
 
 // Err 返回一个"尚未实现"的错误，带出函数名，方便一眼看出还缺哪一块。
 func Err(what string) error {
@@ -38,8 +41,18 @@ func Int64(what string) int64 {
 	return 0
 }
 
-// Panic 用在没有返回值、又无法"返回错误"的地方（例如中间件里的分支、
-// 或者为了满足接口而必须存在的方法）。它会让问题立刻可见，而不是被悄悄跳过。
+// Stub 用在"没有返回值、又没法返回错误"的地方：写缓存、记录点击、给链接挂标签。
+// 它打印一行提醒，然后什么都不做。
+//
+// 为什么不 panic？因为一个 panic 会**中止整个包的测试**（testing 会直接结束进程），
+// 于是你只看到第一个没写的函数，看不到其余测试的状态。
+// 骨架要的是"每一处缺失都各自失败一次"——所以这里只留一行痕迹，让缺失可见但不扩散。
+func Stub(what string) {
+	log.Printf("TODO 未实现（骨架先跳过）: %s", what)
+}
+
+// Panic 是 Stub 的"强硬版"，只在少数确实需要立刻停机的地方使用；
+// 默认请不要用它（理由见 Stub）。
 func Panic(what string) {
 	panic("TODO 未实现: " + what)
 }

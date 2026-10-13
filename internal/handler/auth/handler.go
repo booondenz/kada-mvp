@@ -149,7 +149,8 @@ func (h *Handler) Login(c *gin.Context) {
 
 	resp, err := h.svc.LoginWithPassword(c.Request.Context(), req.Phone, req.Password)
 	if err != nil {
-		// 凭证不匹配是 401，号码格式不对或服务故障是 400。
+		// 凭证不匹配是 401（**包括**号码格式不对：接口对外只有一种失败，
+		// 否则它就成了"问某个号码有没有账号"的工具），其他服务故障是 400。
 		// 注意 401 的文案对三种失败是同一句：接口不能用来"问某个号码有没有账号"。
 		if errors.Is(err, domain.ErrInvalidCredentials) {
 			c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})

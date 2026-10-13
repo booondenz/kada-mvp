@@ -1,0 +1,13 @@
+# 换行符约定。
+#
+# 为什么这件小事值得一个文件：gofmt 的输出永远是 LF。如果 core.autocrlf 把 .go
+# 文件在检出时换成 CRLF，`gofmt -l` 会把**每一个**文件都列成"需要格式化"，
+# 而且 `gofmt -w` 也修不好（它保留文件原有的换行），于是本地和 CI 会一直红，
+# 而真正的格式问题反而被淹没在里面。
+* text=auto
+
+*.go   text eol=lf
+*.md   text eol=lf
+*.yml  text eol=lf
+*.yaml text eol=lf
+*.sh   text eol=lf

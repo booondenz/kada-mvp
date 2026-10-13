@@ -118,6 +118,11 @@ func TestLinkInfoFromEntityHidesPasswordHash(t *testing.T) {
 func TestLinkInfoFromEntityWithoutPassword(t *testing.T) {
 	svc := &LinkService{baseURL: "https://kada.link"}
 	info := svc.linkInfoFromEntity(&entity.Link{ID: 1, ShortCode: "abc1234", Domain: "", IsActive: true})
+	if info == nil {
+		// 骨架态下这个函数返回 nil：显式拦住它，否则下面访问字段会 panic，
+		// 而一个 panic 会中止**整个包**剩下的测试，你就只看到一个失败点。
+		t.Fatal("linkInfoFromEntity 返回了 nil（这一条还没有实现）")
+	}
 	if info.HasPassword {
 		t.Error("HasPassword = true, want false（没有密码哈希）")
 	}

@@ -31,9 +31,12 @@ type Claims struct {
 // 交给 tokenValidator 校验；MVP 没有开放 API 令牌，所以只要处理 JWT。）
 //
 // 要求（每条都对应一个验收测试）：
+//
 //  1. 取 Authorization 头。为空 → 401 {"error": "authentication token not provided"}，然后 c.Abort()。
+//
 //  2. 用 strings.SplitN(header, " ", 2) 切开，必须是 2 段且第一段恰好是 "Bearer"
 //     （注意大小写：HTTP 规范要求的是 "Bearer"）。不满足 → 401 {"error": "invalid authorization header format"}。
+//
 //  3. 用 jwt.ParseWithClaims 解析成 *Claims，并且**必须**显式限制算法与要求过期时间：
 //
 //     jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
@@ -41,8 +44,11 @@ type Claims struct {
 //
 //     这两行不是装饰。不限制算法时，攻击者可以把 header 改成 {"alg":"none"} 提交一个
 //     无签名 token（"算法混淆攻击"）；不要求过期时间时，一个泄露的 token 就永久有效。
+//
 //  4. 解析失败或 !token.Valid → 401 {"error": "authentication token is invalid or expired"}。
+//
 //  5. keyFunc 里返回 []byte(secret)（HS256 是对称密钥）。
+//
 //  6. 成功时 c.Set("user_id", claims.UserID)，再 c.Next()。
 //
 // 注意：**任何一条失败路径都必须 c.Abort()**。少了它，后面的 handler 照样会执行——

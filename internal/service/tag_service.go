@@ -30,7 +30,8 @@ func NewTagService(db *gorm.DB) *TagService {
 //     但服务层显式写出来，返回值里才有正确的颜色——BeforeCreate 只影响写库，不影响你手里的结构体）。
 //  3. 插入 entity.Tag，返回 domain.Tag。
 //
-// 验收：go test ./internal/service/ -run TestTagService
+// 验收：本函数没有单独的单测。它的归属条件由 TestOrganizationListsAreScopedToTheUser 覆盖；
+// 其余行为请按 README 第 3 节的冒烟流程验证。
 func (s *TagService) Create(ctx context.Context, userID int64, req domain.CreateTagRequest) (*domain.Tag, error) {
 	return nil, todo.Err("TagService.Create")
 }
@@ -44,7 +45,8 @@ func (s *TagService) Create(ctx context.Context, userID int64, req domain.Create
 //     而"没有标签"应该序列化成 []（原项目在多个 DTO 上有这条约定）。
 //     做法：`out := make([]domain.Tag, 0, len(tags))`。
 //
-// 验收：go test ./internal/service/ -run TestTagService
+// 验收：本函数没有单独的单测。它的归属条件由 TestOrganizationListsAreScopedToTheUser 覆盖；
+// 其余行为请按 README 第 3 节的冒烟流程验证。
 func (s *TagService) List(ctx context.Context, userID int64) ([]domain.Tag, error) {
 	return nil, todo.Err("TagService.List")
 }
@@ -56,7 +58,8 @@ func (s *TagService) List(ctx context.Context, userID int64) ([]domain.Tag, erro
 //     所以这里只需要删 tags 这一行，而且 WHERE 里必须有 user_id。
 //  2. RowsAffected == 0 → not found。
 //
-// 验收：go test ./internal/service/ -run TestTagService
+// 验收：本函数没有单独的单测。它的归属条件由 TestOrganizationListsAreScopedToTheUser 覆盖；
+// 其余行为请按 README 第 3 节的冒烟流程验证。
 func (s *TagService) Delete(ctx context.Context, userID, tagID int64) error {
 	return todo.Err("TagService.Delete")
 }

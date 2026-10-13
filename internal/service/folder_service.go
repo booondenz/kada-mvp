@@ -33,7 +33,8 @@ func NewFolderService(db *gorm.DB) *FolderService {
 // 注意：不要去查"这个用户是不是已经有同名文件夹"。同名文件夹是允许的
 // （真正不能重复的是短码这种被引用的标识），而多一次查询就多一个竞态。
 //
-// 验收：go test ./internal/service/ -run TestFolderService
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *FolderService) Create(ctx context.Context, userID int64, req domain.CreateFolderRequest) (*domain.Folder, error) {
 	return nil, todo.Err("FolderService.Create")
 }
@@ -51,9 +52,12 @@ func (s *FolderService) Create(ctx context.Context, userID int64, req domain.Cre
 // 用子查询而不是 LEFT JOIN + GROUP BY：一条链接只能属于一个文件夹，
 // 但子查询让"计数"这件事和"列表"这件事在 SQL 里保持独立，读起来不用在脑子里做聚合。
 //
-// 归属条件仍然是第一个 WHERE。
+// 归属条件仍然是第一个 WHERE。//
+// ⚠ 用 Find，不要用 Scan：DryRun 会话下 GORM 的 Scan/Rows 会返回 ErrDryRunModeUnsupported，
+// 而验收测试都跑在 DryRun 上。
 //
-// 验收：go test ./internal/service/ -run TestFolderService
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *FolderService) List(ctx context.Context, userID int64) ([]domain.Folder, error) {
 	return nil, todo.Err("FolderService.List")
 }
@@ -71,7 +75,8 @@ func (s *FolderService) List(ctx context.Context, userID int64) ([]domain.Folder
 // 注意这里用 Updates(map) 而不是 Updates(struct)：map 能表达"把字段改成零值"，
 // struct 不能（GORM 会跳过零值字段）。
 //
-// 验收：go test ./internal/service/ -run TestFolderService
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *FolderService) Update(ctx context.Context, userID, folderID int64, name string) (*domain.Folder, error) {
 	return nil, todo.Err("FolderService.Update")
 }
@@ -86,7 +91,8 @@ func (s *FolderService) Update(ctx context.Context, userID, folderID int64, name
 //     二是它顺便做了一次归属校验——如果这个文件夹不是你的，第一步就影响 0 行。
 //  2. DELETE FROM folders WHERE id = ? AND user_id = ?，RowsAffected == 0 → not found。
 //
-// 验收：go test ./internal/service/ -run TestFolderServiceDeleteDetachesLinks
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *FolderService) Delete(ctx context.Context, userID, folderID int64) error {
 	return todo.Err("FolderService.Delete")
 }

@@ -1,0 +1,39 @@
+# 开发环境依赖：PostgreSQL + Redis。
+#
+# 为什么没有 Kafka？因为 Kafka 在本项目里是**可选**的：
+# KAFKA_BROKERS 留空时，cmd/server 会把点击直接写进数据库（降级模式），
+# 整条链路照样能跑通。想练 cmd/worker 的时候再按 README 里的说明单独起一个 Kafka。
+#
+# 用法：
+#   docker compose up -d
+#   go run ./cmd/migrate
+#   go run ./cmd/server
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: kada
+      POSTGRES_PASSWORD: kada123
+      POSTGRES_DB: kada
+    ports:
+      - "5432:5432"
+    volumes:
+      - kada-pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kada -d kada"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  kada-pgdata:

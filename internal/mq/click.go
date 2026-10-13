@@ -24,11 +24,11 @@ import (
 // 共用一个结构体是刻意的：如果两端各写一个，那么"字段改了但只改了一边"这种错误
 // 只会在运行时以反序列化出零值的形式出现，而那种错误看起来像"数据丢了"。
 type ClickEvent struct {
-	EventID   string    `json:"event_id"` // 幂等键，worker 靠它去重
-	LinkID    int64     `json:"link_id"`
-	IP        string    `json:"ip"`
-	UserAgent string    `json:"user_agent"`
-	Platform  string    `json:"platform"`
+	EventID   string `json:"event_id"` // 幂等键，worker 靠它去重
+	LinkID    int64  `json:"link_id"`
+	IP        string `json:"ip"`
+	UserAgent string `json:"user_agent"`
+	Platform  string `json:"platform"`
 	// Kind 说明这条事件"是什么的证据"（domain.ClickKind）。
 	// 它跟着事件走，而不是在写入时现算：只有请求所在的位置知道
 	// 页面是被服务了（可能是预取）还是客户端直接去了目标地址。

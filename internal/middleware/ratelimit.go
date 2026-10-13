@@ -57,17 +57,25 @@ func NewRateLimiter(client *redis.Client) *RateLimiter {
 // 再数剩下的、然后把本次请求加进去。
 //
 // 要求：
+//
 //  1. KeyFunc 为 nil 时用 defaultKeyFunc（按 IP 分桶）。
 //     key 加前缀 "ratelimit:"，否则会和缓存用的 key 撞在一个命名空间里。
+//
 //  2. now := time.Now().UnixNano()；windowStart := now - cfg.Window.Nanoseconds()。
+//
 //  3. 用一条 Pipeline（一次往返）依次执行：
 //     - ZRemRangeByScore(key, "0", windowStart)：清掉窗口外的记录
 //     - ZCard(key)：数窗口内的记录数（**必须在 ZAdd 之前数**，否则本次请求会把自己算进去）
-//     - ZAdd(key, now, now)：把本次请求记进去
+//     - ZAdd(key, now, member)：把本次请求记进去（member 必须每个请求都唯一，见下）
 //     - Expire(key, cfg.Window*2)：给 key 一个过期时间，否则冷 key 永远留在 Redis 里
-//  4. Pipeline 执行失败 → **直接 c.Next() 放行**（fail open）。
-//     这是本项目的立场：Redis 挂了宁可暂时不拦，也不能让整个 API 变成 429 或 500。
+//
+//  4. Pipeline 执行失败 → **直接 c.Next() 放行**（fail open），**但要 log 一行**。
+//     立场：Redis 挂了宁可暂时不拦，也不能让整个 API 变成 429 或 500。
+//     而那句日志是这个取舍的记账单：没有它，"限流好像没生效"在生产上会变成一个
+//     查不出来的问题——代码看起来是对的，唯一知道真相的地方却被丢掉了。
+//
 //  5. 设置响应头 X-RateLimit-Limit 和 X-RateLimit-Remaining（remaining 最小为 0）。
+//
 //  6. 如果 count >= Limit → 429：
 //
 //     c.JSON(http.StatusTooManyRequests, gin.H{
@@ -78,8 +86,15 @@ func NewRateLimiter(client *redis.Client) *RateLimiter {
 //
 //  7. 否则 c.Next()。
 //
-// 注意成员名用 fmt.Sprintf("%d", now)：同一纳秒内的两个请求会共用成员名而只留一条，
-// 这是这个实现可接受的取舍（纳米级同刻请求几乎不存在），但你要知道它存在。
+// 注意 ZSET 的成员名（member）必须**每个请求都唯一**，只用时间戳是不够的：
+// Score 用时间戳（窗口比较要用它），Member 写成 fmt.Sprintf("%d-%d", now, seq)，
+// seq 来自一个包级 atomic.Int64（记得 import sync/atomic）。
+//
+// 为什么？因为这是一个"在 Linux 上看不出来"的 bug：Linux 的墙钟分辨率接近纳秒，
+// 两次请求几乎撞不上；而 Windows 的时钟分辨率可能粗到毫秒级，同一毫秒内的几个请求
+// 会写出同一个 member，ZADD 于是变成**覆盖**而不是新增——窗口里始终只有一条记录，
+// 限流形同虚设。这是本骨架在 Windows 上实测踩到的坑；验收测试会断言
+// "3 次请求之后窗口里正好有 3 条记录"，那条断言就是为它写的。
 //
 // 验收：go test ./internal/middleware/ -run TestRateLimit
 func (rl *RateLimiter) Limit(cfg RateLimitConfig) gin.HandlerFunc {

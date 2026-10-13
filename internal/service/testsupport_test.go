@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -58,17 +59,23 @@ func newMissingRowDB(t *testing.T, delay time.Duration) (*gorm.DB, *int64) {
 }
 
 // captureSQL 把每一条执行过的语句收进返回的切片，供测试断言。
+//
+// 记录的不只是 SQL 文本，还有**绑定值**（DryRun 下语句里是 $1/$2 占位符，
+// 值在 Statement.Vars 里）。这样断言可以精确到"写进去的是哈希而不是明文"这种程度，
+// 而不是只能检查"有没有出现过 code_hash 这个词"。
 func captureSQL(t *testing.T, db *gorm.DB) *[]string {
 	t.Helper()
 
 	var mu sync.Mutex
 	stmts := &[]string{}
 	record := func(tx *gorm.DB) {
-		if sql := tx.Statement.SQL.String(); sql != "" {
-			mu.Lock()
-			*stmts = append(*stmts, sql)
-			mu.Unlock()
+		sql := tx.Statement.SQL.String()
+		if sql == "" {
+			return
 		}
+		mu.Lock()
+		*stmts = append(*stmts, sql+" ||VARS|| "+fmt.Sprint(tx.Statement.Vars))
+		mu.Unlock()
 	}
 	must := func(err error) {
 		if err != nil {
@@ -89,14 +96,15 @@ func captureSQL(t *testing.T, db *gorm.DB) *[]string {
 
 // containsAll 对 SQL 做小写比较后，要求每一段都在里面。
 //
-// 小写比较是刻意的：GORM 渲染出的是 "SELECT ... FROM links"，而手写 SQL 的人
-// 可能写成 "select ... from links"。测试要盯的是**语义**（有没有 join、有没有过滤 kind），
-// 不是大小写风格。
+// 比较前会去掉引号和反引号：GORM 的构造器渲染出的是 `FROM "links"`，
+// 而手写 SQL 是 `FROM links`。测试要盯的是**语义**（有没有 JOIN links、有没有过滤 kind、
+// 有没有把 user_id 放进 WHERE），不是引号风格。
 func containsAll(t *testing.T, sql string, needles ...string) {
 	t.Helper()
-	lower := strings.ToLower(sql)
+	strip := strings.NewReplacer(`"`, "", "`", "").Replace
+	lower := strings.ToLower(strip(sql))
 	for _, want := range needles {
-		if !strings.Contains(lower, strings.ToLower(want)) {
+		if !strings.Contains(lower, strings.ToLower(strip(want))) {
 			t.Errorf("生成的 SQL 缺少 %q：\n%s", want, sql)
 		}
 	}

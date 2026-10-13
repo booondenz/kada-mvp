@@ -193,7 +193,9 @@ func TestRedirectServesGuidePageForWeChat(t *testing.T) {
 		t.Error("引导页里没有目标地址")
 	}
 	// 页面加载后会自己发这个 POST 来确认访问——预取器抓了 HTML 就走，不会走到这一步。
-	if !strings.Contains(body, "/r/abc1234/visit") {
+	// 注意字符串在 JS 里是拼出来的（'/r/' + "abc1234" + '/visit'），所以这里分段检查，
+	// 而不是去找一个完整的 "/r/abc1234/visit" 字面量。
+	if !strings.Contains(body, "abc1234") || !strings.Contains(body, "/visit") {
 		t.Error("引导页里没有访问确认的调用")
 	}
 

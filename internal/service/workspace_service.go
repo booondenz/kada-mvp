@@ -39,7 +39,8 @@ func NewWorkspaceService(db *gorm.DB) *WorkspaceService {
 //     这是"预检为了体验、约束为了正确"的典型分工。
 //  3. 插入 entity.Workspace{Name, Slug, UserID}，返回 domain.Workspace。
 //
-// 验收：go test ./internal/service/ -run TestWorkspaceService
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *WorkspaceService) Create(ctx context.Context, userID int64, req domain.CreateWorkspaceRequest) (*domain.Workspace, error) {
 	return nil, todo.Err("WorkspaceService.Create")
 }
@@ -54,9 +55,12 @@ func (s *WorkspaceService) Create(ctx context.Context, userID int64, req domain.
 //	 WHERE w.user_id = ?
 //	 ORDER BY w.created_at DESC
 //
-// 返回空切片而不是 nil（同 TagService.List 的理由）。
+// 返回空切片而不是 nil（同 TagService.List 的理由）。//
+// ⚠ 用 Find，不要用 Scan：DryRun 会话下 GORM 的 Scan/Rows 会返回 ErrDryRunModeUnsupported，
+// 而验收测试都跑在 DryRun 上。
 //
-// 验收：go test ./internal/service/ -run TestWorkspaceService
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *WorkspaceService) List(ctx context.Context, userID int64) ([]domain.Workspace, error) {
 	return nil, todo.Err("WorkspaceService.List")
 }
@@ -76,7 +80,8 @@ func (s *WorkspaceService) GetByID(ctx context.Context, workspaceID, userID int6
 //  2. req.Name / req.Slug 非 nil 才改；slug 改了要 validateSlug + slugTaken(..., 排除自己)。
 //  3. 用 Updates(map[string]any{...}) 落库，返回更新后的 domain.Workspace。
 //
-// 验收：go test ./internal/service/ -run TestWorkspaceService
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *WorkspaceService) Update(ctx context.Context, workspaceID, userID int64, req domain.UpdateWorkspaceRequest) (*domain.Workspace, error) {
 	return nil, todo.Err("WorkspaceService.Update")
 }
@@ -91,7 +96,8 @@ func (s *WorkspaceService) Update(ctx context.Context, workspaceID, userID int64
 // 如果还有链接引用它，数据库会直接拒绝删除。所以第 1 步不是"顺手做的好事"，
 // 而是这个删除能成功的前提。
 //
-// 验收：go test ./internal/service/ -run TestWorkspaceServiceDelete
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *WorkspaceService) Delete(ctx context.Context, workspaceID, userID int64) error {
 	return todo.Err("WorkspaceService.Delete")
 }
@@ -113,7 +119,8 @@ func validateSlug(slug string) error {
 //	SELECT count(*) FROM workspaces WHERE slug = ? AND id <> ?
 //	查询出错时返回 true（宁可拒绝一次合法请求，也不要放进一个冲突的 slug）。
 //
-// 验收：go test ./internal/service/ -run TestWorkspaceService
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *WorkspaceService) slugTaken(ctx context.Context, slug string, exceptID int64) bool {
 	return todo.Bool("WorkspaceService.slugTaken")
 }

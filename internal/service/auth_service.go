@@ -114,25 +114,28 @@ func (s *AuthService) GenerateCaptcha(ctx context.Context, ip string) (*domain.C
 //
 // TODO(练习 8)：实现它。**顺序就是设计**，每一步都不能挪：
 //
-//	1. 手机号格式不对 → 直接 400（在碰数据库之前就拒掉）。
-//	2. consumeCaptcha(ctx, captchaID, captchaAnswer)：
-//	   图形验证码是**先校验、而且无论后面成败都被烧掉**。
-//	   为什么？因为这是全站唯一"能让服务器花钱"的未认证接口。
-//	   一个"发失败还能复用"的验证码，等于给了自动化调用者一张可以反复刷的卡。
-//	   客户端每次尝试后都会重新取一张，就是为了这个。
-//	3. 号码冷却：60 秒内已经给这个号码发过 → *domain.RateLimitError{RetryAfterSeconds: 剩余秒数}。
-//	4. IP 配额：这一小时这个 IP 已经发了 >= ipHourlySendLimit 次 → 同样是 RateLimitError。
-//	5. code := randomDigits(6)；s.sms.Send(ctx, phone, code)，失败就返回错误（不要存哈希）。
-//	6. 存一行 sms_codes：Phone, CodeHash=sha256Hex(code), IP, ExpiresAt=now+smsCodeTTL。
-//	   失败要返回错误——注意原项目在这里有过一个真实故障：这一行插入在**短信已经发出去之后**，
-//	   当时表上残留了一个 NOT NULL 的历史列导致插入失败，用户收到了验证码却看到"发送失败",
-//	   而因为没写成行，冷却也就永远匹配不到，于是每次重试都真的再发一条短信。
-//	   教训：发出去之后才写的那一步，失败信息必须非常明确。
+//  1. 手机号格式不对 → 直接 400（在碰数据库之前就拒掉）。
+//  2. consumeCaptcha(ctx, captchaID, captchaAnswer)：
+//     图形验证码是**先校验、而且无论后面成败都被烧掉**。
+//     为什么？因为这是全站唯一"能让服务器花钱"的未认证接口。
+//     一个"发失败还能复用"的验证码，等于给了自动化调用者一张可以反复刷的卡。
+//     客户端每次尝试后都会重新取一张，就是为了这个。
+//  3. 号码冷却：60 秒内已经给这个号码发过 → *domain.RateLimitError{RetryAfterSeconds: 剩余秒数}。
+//  4. IP 配额：这一小时这个 IP 已经发了 >= ipHourlySendLimit 次 → 同样是 RateLimitError。
+//  5. code := randomDigits(6)；s.sms.Send(ctx, phone, code)，失败就返回错误（不要存哈希）。
+//  6. 存一行 sms_codes：Phone, CodeHash=sha256Hex(code), IP, ExpiresAt=now+smsCodeTTL。
+//     失败要返回错误——注意原项目在这里有过一个真实故障：这一行插入在**短信已经发出去之后**，
+//     当时表上残留了一个 NOT NULL 的历史列导致插入失败，用户收到了验证码却看到"发送失败",
+//     而因为没写成行，冷却也就永远匹配不到，于是每次重试都真的再发一条短信。
+//     教训：发出去之后才写的那一步，失败信息必须非常明确。
 //
 // 配额怎么查（都是"数几行"）：
 //   - 号码冷却：SELECT count(*) FROM sms_codes WHERE phone = ? AND created_at > now()-60s
 //   - IP 小时配额：SELECT count(*) FROM sms_codes WHERE ip = ? AND created_at > now()-1h
-//   用 Model(&entity.SMSVerificationCode{}).Where(...).Count(&n) 即可。
+//     用 Model(&entity.SMSVerificationCode{}).Where(...).Count(&n) 即可。
+//
+// 注意 COUNT 拿不到"还剩多久"：RetryAfterSeconds 返回整个窗口（60 / 3600 秒）就够用了，
+// 想更精确就得改成查最新一行的 created_at 再自己算差值（原项目也是返回整窗口）。
 //
 // 返回的错误类型：配额用 *domain.RateLimitError（HTTP 层会翻译成 429 + Retry-After），
 // 其他失败用普通 error（HTTP 层翻译成 400）。
@@ -154,8 +157,8 @@ func (s *AuthService) SendSMSCode(ctx context.Context, phone, ip, captchaID, cap
 //     - 查不到（errors.Is(err, gorm.ErrRecordNotFound)）→ 用 bcrypt 哈希密码，创建账号。
 //     - 查到且 PasswordHash == nil → 给它设上密码（这类账号是老数据，验证码是唯一的入口）。
 //     - 查到且已有密码 → 返回 domain.ErrAlreadyRegistered（HTTP 409）。
-//       为什么拒绝而不是覆盖？因为这个接口是未登录可调的：
-//       允许覆盖就等于"拿到一个验证码可以改掉别人的密码"。
+//     为什么拒绝而不是覆盖？因为这个接口是未登录可调的：
+//     允许覆盖就等于"拿到一个验证码可以改掉别人的密码"。
 //  4. startSession(ctx, user, ip) 签发 token 并返回。
 //  5. 创建账号时如果撞唯一约束（isDuplicateKey(err)）：这是"同一号码并发注册"的并发窗口，
 //     返回 domain.ErrAlreadyRegistered 而不是 500——对调用方来说答案确实是"去登录"。
@@ -195,10 +198,11 @@ func (s *AuthService) LoginWithPassword(ctx context.Context, phone, password str
 //  2. consumeSMSCode(ctx, phone, code) → 失败返回错误。
 //  3. userByPhone：查不到 → domain.ErrInvalidCredentials
 //     （验证码是对的，但号码上确实没有账号：这种情况必须明确拒绝，
-//      而不是"顺手给你建一个"，否则这又是一个未认证的可写入口）。
+//     而不是"顺手给你建一个"，否则这又是一个未认证的可写入口）。
 //  4. startSession。
 //
-// 验收：go test ./internal/service/ -run TestLoginByPhone
+// 验收：本函数没有单独的单测。它依赖"验证码已被消耗 + 账号存在"这两件事的组合，
+// 请按 README 第 3 节的冒烟流程验证（login-by-phone 能换到 token；未注册的号码必须 401）。
 func (s *AuthService) LoginByPhone(ctx context.Context, phone, code string) (*domain.AuthResponse, error) {
 	return nil, todo.Err("AuthService.LoginByPhone")
 }
@@ -208,7 +212,8 @@ func (s *AuthService) LoginByPhone(ctx context.Context, phone, code string) (*do
 // TODO(练习 12)：实现它。一条查询 + 映射成 domain.UserInfo（只发布手机号）。
 // 查不到返回错误。
 //
-// 验收：go test ./internal/service/ -run TestGetUserByID
+// 验收：本函数没有单独的单测（一条查询的映射，测试价值低于它需要的数据库）；
+// 用 README 第 3 节的冒烟流程验证 GET /api/me 返回的 user 里只有 id 和 phone。
 func (s *AuthService) GetUserByID(ctx context.Context, userID int64) (*domain.UserInfo, error) {
 	return nil, todo.Err("AuthService.GetUserByID")
 }
@@ -283,7 +288,10 @@ func (s *AuthService) consumeSMSCode(ctx context.Context, phone, code string) er
 //     所以错误只记日志。
 //  3. 返回 &domain.AuthResponse{Token: token, User: domain.UserInfo{ID: user.ID, Phone: user.Phone}}。
 //
-// 验收：go test ./internal/service/ -run TestStartSession
+// 验收：本函数没有单独的单测（签发的 token 能不能用，由 middleware.JWTAuth 的测试和冒烟流程一起覆盖）。
+// 注意 ip：MVP 里三个调用方（Register / LoginWithPassword / LoginByPhone）的签名里都没有 IP，
+// 只能传空串，于是 users.last_login_ip 是空的。想补齐这条路，就从 handler 往下加一个参数——
+// 但先想清楚：一个"可空的 IP"和"没有 IP"在数据库里是同一个值，而登录风控恰恰依赖这个区别。
 func (s *AuthService) startSession(ctx context.Context, user *entity.User, ip string) (*domain.AuthResponse, error) {
 	return nil, todo.Err("AuthService.startSession")
 }

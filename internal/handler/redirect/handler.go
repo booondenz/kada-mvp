@@ -91,23 +91,23 @@ func platformOf(c *gin.Context) domain.Platform {
 //
 // TODO(练习 71)：实现它。分支顺序就是语义顺序：
 //
-//	1. code := c.Param("code")
-//	2. link, err := h.svc.GetByCode(ctx, code)
-//	   err != nil → 404 + 纯文本 "link not found or expired"
-//	   （这里用 c.String 而不是 JSON：这个 URL 是给人点的，浏览器直接展示这段文字，
-//	    而 `{"error":"..."}` 显示出来是一串让人困惑的符号。）
-//	3. link.HasPassword → 200 + text/html + passwordPageHTML(code)
-//	   （**在这一步之前不要记录点击**：还没证明访问者能打开它。
-//	     密码页本身是"服务了一个页面"，不是一次访问。）
-//	4. userAgent := c.GetHeader("User-Agent")；platform := ua.Detect(userAgent)
-//	5. 平台需要中间页（ua.NeedsIntermediatePage(platform)）→
-//	   - record 一条 Kind=domain.ClickRequest 的事件（页面被服务了，但还没人确认），
-//	     Referer 用 c.GetHeader("Referer")（**这一行才是访问者真正的来路**）；
-//	   - 回 200 + text/html + guidePageHTML(link)。
-//	6. 否则（可以直接跳）→ record 一条 Kind=evidenceKind(userAgent, platform) 的事件，
-//	   然后 c.Redirect(http.StatusFound, link.OriginalURL)。
-//	7. ⚠ 顺序：先 record，再写响应。反过来的话，响应已经发出时再去 spawn
-//	   goroutine 记录，在"进程紧接着退出"这种极端情况下更容易把点击丢掉。
+//  1. code := c.Param("code")
+//  2. link, err := h.svc.GetByCode(ctx, code)
+//     err != nil → 404 + 纯文本 "link not found or expired"
+//     （这里用 c.String 而不是 JSON：这个 URL 是给人点的，浏览器直接展示这段文字，
+//     而 `{"error":"..."}` 显示出来是一串让人困惑的符号。）
+//  3. link.HasPassword → 200 + text/html + passwordPageHTML(code)
+//     （**在这一步之前不要记录点击**：还没证明访问者能打开它。
+//     密码页本身是"服务了一个页面"，不是一次访问。）
+//  4. userAgent := c.GetHeader("User-Agent")；platform := ua.Detect(userAgent)
+//  5. 平台需要中间页（ua.NeedsIntermediatePage(platform)）→
+//     - record 一条 Kind=domain.ClickRequest 的事件（页面被服务了，但还没人确认），
+//     Referer 用 c.GetHeader("Referer")（**这一行才是访问者真正的来路**）；
+//     - 回 200 + text/html + guidePageHTML(link)。
+//  6. 否则（可以直接跳）→ record 一条 Kind=evidenceKind(userAgent, platform) 的事件，
+//     然后 c.Redirect(http.StatusFound, link.OriginalURL)。
+//  7. ⚠ 顺序：先 record，再写响应。反过来的话，响应已经发出时再去 spawn
+//     goroutine 记录，在"进程紧接着退出"这种极端情况下更容易把点击丢掉。
 //
 // 关于 302 而不是 301：301 会被浏览器**永久**缓存，之后即使这条链接被停用、
 // 被改目标，访问者也不会再回到我们这里——点击数直接归零，而且我们根本不知道。

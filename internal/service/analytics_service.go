@@ -36,7 +36,17 @@ func NewAnalyticsService(db *gorm.DB) *AnalyticsService {
 //	SELECT COUNT(*) AS total_links, COALESCE(SUM(click_count), 0) AS total_clicks
 //	  FROM links WHERE user_id = ?
 //
-// 用 s.db.WithContext(ctx).Model(&entity.Link{}).Select(...).Where("user_id = ?", userID).Scan(&out)。
+// 两种写法都行：
+//
+//	s.db.WithContext(ctx).Model(&entity.Link{}).
+//	    Select("COUNT(*) AS total_links, COALESCE(SUM(click_count), 0) AS total_clicks").
+//	    Where("user_id = ?", userID).Find(&out)
+//	// 或者直接手写 SQL：
+//	s.db.WithContext(ctx).Raw(`SELECT ... FROM links WHERE user_id = ?`, userID).Find(&out)
+//
+// ⚠ 用 Find，不要用 Scan：两者在真实数据库上执行的 SQL 完全一样，但 Scan 走的是 sql.Rows
+// 那条路，而 DryRun 会话不支持它（gorm v1.31 的 Scan/Rows 会直接返回 ErrDryRunModeUnsupported）。
+// 验收测试全部跑在 DryRun 上，所以用 Scan 会得到一个和你的 SQL 毫无关系的错误。
 //
 // 两个细节：
 //   - **COALESCE(..., 0)**：一个还没有链接的用户，SUM 返回的是 NULL，

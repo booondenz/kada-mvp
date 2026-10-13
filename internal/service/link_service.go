@@ -21,10 +21,10 @@ import (
 // 对照原项目：kada/internal/service/link_service.go（786 行，是仓库里最大的一个文件）。
 // MVP 保留了它的四条主线，每一章都对应一个"原项目踩过坑"的地方：
 //
-//	1. cache-aside：跳转先查 Redis，未命中才查库，查完回填；改删都要让相关短码失效。
-//	2. 否定缓存：查不到的短码也记住 60 秒，且**只记"确实不存在"**。
-//	3. 降级与幂等：点击走 Kafka；Kafka 不可用就直写库；event_id 保证不重复计数。
-//	4. 归属校验：user_id 永远出现在 WHERE 里，而不是"查出来之后再判断"。
+//  1. cache-aside：跳转先查 Redis，未命中才查库，查完回填；改删都要让相关短码失效。
+//  2. 否定缓存：查不到的短码也记住 60 秒，且**只记"确实不存在"**。
+//  3. 降级与幂等：点击走 Kafka；Kafka 不可用就直写库；event_id 保证不重复计数。
+//  4. 归属校验：user_id 永远出现在 WHERE 里，而不是"查出来之后再判断"。
 type LinkService struct {
 	db          *gorm.DB
 	baseURL     string
@@ -79,26 +79,27 @@ type linkListRow struct {
 //
 // TODO(练习 26)：实现它。这一段是"输入校验 → 生成标识 → 落库 → 维护缓存"的完整样本。
 //
-//	1. isSafeTarget(req.OriginalURL) 必须为真，否则返回错误。
-//	   （只允许 http/https。这条不是形式主义：`javascript:` 和 `data:` 的目标 URL
-//	    会在跳转页上执行脚本。）
-//	2. 短码：
-//	   - req.ShortCode 为空 → generateShortCode()；
-//	   - 传了就先用 shortCodePattern 校验，再 shortCodeTaken() 确认没被占用；
-//	     占用返回一个能直接给用户看的错误（例如 "this short code is already taken"）。
-//	3. 密码：req.Password 非空 → hashPassword(*req.Password)。
-//	4. 过期时间：req.ExpiresAt 非空 → time.Parse(time.RFC3339, *req.ExpiresAt)，解析失败返回错误。
-//	5. 归属校验：validateOwnedRefs(ctx, userID, req.FolderID, req.WorkspaceID)。
-//	   为什么必须做？因为 folder_id / workspace_id 是客户端传进来的整数，
-//	   不校验就等于允许"把我的链接放进你的文件夹"。
-//	6. 落库：插入 entity.Link{...}，Domain 为空时用 s.baseURL 的 host 兜底
-//	   （提示：可以用 strings.TrimPrefix(s.baseURL, "https://") 之类的简单处理，
-//	     MVP 不追求完美，但要在注释里写清你的假设）。
-//	   撞唯一约束（isDuplicateKey(err)）说明短码被并发抢了 → 返回可读的错误。
-//	7. 标签：attachOwnedTags(ctx, userID, link.ID, req.TagIDs)。
-//	8. 返回 s.linkInfoFromEntity(&link)（里面会拼好 ShortURL）。
+//  1. isSafeTarget(req.OriginalURL) 必须为真，否则返回错误。
+//     （只允许 http/https。这条不是形式主义：`javascript:` 和 `data:` 的目标 URL
+//     会在跳转页上执行脚本。）
+//  2. 短码：
+//     - req.ShortCode 为空 → generateShortCode()；
+//     - 传了就先用 shortCodePattern 校验，再 shortCodeTaken() 确认没被占用；
+//     占用返回一个能直接给用户看的错误（例如 "this short code is already taken"）。
+//  3. 密码：req.Password 非空 → hashPassword(*req.Password)。
+//  4. 过期时间：req.ExpiresAt 非空 → time.Parse(time.RFC3339, *req.ExpiresAt)，解析失败返回错误。
+//  5. 归属校验：validateOwnedRefs(ctx, userID, req.FolderID, req.WorkspaceID)。
+//     为什么必须做？因为 folder_id / workspace_id 是客户端传进来的整数，
+//     不校验就等于允许"把我的链接放进你的文件夹"。
+//  6. 落库：插入 entity.Link{...}，Domain 为空时用 s.baseURL 的 host 兜底
+//     （提示：可以用 strings.TrimPrefix(s.baseURL, "https://") 之类的简单处理，
+//     MVP 不追求完美，但要在注释里写清你的假设）。
+//     撞唯一约束（isDuplicateKey(err)）说明短码被并发抢了 → 返回可读的错误。
+//  7. 标签：attachOwnedTags(ctx, userID, link.ID, req.TagIDs)。
+//  8. 返回 s.linkInfoFromEntity(&link)（里面会拼好 ShortURL）。
 //
-// 验收：go test ./internal/service/ -run TestCreateLink
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) Create(ctx context.Context, userID int64, req domain.CreateLinkRequest) (*domain.LinkInfo, error) {
 	return nil, todo.Err("LinkService.Create")
 }
@@ -115,7 +116,8 @@ func (s *LinkService) Create(ctx context.Context, userID int64, req domain.Creat
 //     那会泄露"这行存在但不是你的"）。
 //  3. 用 toLinkInfo 补上文件夹名和标签。
 //
-// 验收：go test ./internal/service/ -run TestGetByIDEnforcesOwnership
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) GetByID(ctx context.Context, linkID, userID int64) (*domain.LinkInfo, error) {
 	return nil, todo.Err("LinkService.GetByID")
 }
@@ -124,22 +126,22 @@ func (s *LinkService) GetByID(ctx context.Context, linkID, userID int64) (*domai
 //
 // TODO(练习 28)：实现它。这一段是 cache-aside 的教科书形状，而且有两个细节必须做对：
 //
-//	1. 缓存命中（s.cache != nil 且 GetLink 返回 ok）→ 先 isLinkUsable 再返回。
-//	   **为什么缓存命中还要再检查？** 因为缓存里那一行可能是 10 分钟前写进去的，
-//	   而这段时间里链接可能刚好过期。"从缓存返回"绝不能绕过"它还有效吗"这个判断。
-//	   不可用 → 返回 domain.ErrLinkNotFound（顺手 invalidate 掉这条脏缓存）。
-//	2. 否定缓存命中（s.cache.IsMissing 为真）→ 直接返回 domain.ErrLinkNotFound，**不查库**。
-//	   这就是"扫描器把每个请求都变成一次查询"的解法。
-//	3. 都没有 → 用 s.group.Do(shortCode, func() (any, error) { return s.loadLink(ctx, shortCode) })
-//	   把并发合并成一次读（见 struct 上 group 的注释）。
-//	   注意 group.Do 返回的是 (any, error)，你要做类型断言；断言失败当内部错误处理。
-//	4. loadLink 成功 → cacheLink(ctx, info) 后返回。
-//	5. loadLink 失败且是"确实不存在"（errors.Is(err, domain.ErrLinkNotFound)）→
-//	   markMissing(ctx, shortCode) 后返回该错误。
-//	   ⚠ 只有"确实不存在"才写否定缓存。**数据库连不上时绝不能写**：
-//	     否则一次数据库故障会把"所有短码都不存在"这个结论写进 Redis，
-//	     而且它会按 TTL 活过故障本身（原项目把这条写进了设计文档）。
-//	     所以 loadLink 必须把"查不到"和"查不动"分成两种错误返回。
+//  1. 缓存命中（s.cache != nil 且 GetLink 返回 ok）→ 先 isLinkUsable 再返回。
+//     **为什么缓存命中还要再检查？** 因为缓存里那一行可能是 10 分钟前写进去的，
+//     而这段时间里链接可能刚好过期。"从缓存返回"绝不能绕过"它还有效吗"这个判断。
+//     不可用 → 返回 domain.ErrLinkNotFound（顺手 invalidate 掉这条脏缓存）。
+//  2. 否定缓存命中（s.cache.IsMissing 为真）→ 直接返回 domain.ErrLinkNotFound，**不查库**。
+//     这就是"扫描器把每个请求都变成一次查询"的解法。
+//  3. 都没有 → 用 s.group.Do(shortCode, func() (any, error) { return s.loadLink(ctx, shortCode) })
+//     把并发合并成一次读（见 struct 上 group 的注释）。
+//     注意 group.Do 返回的是 (any, error)，你要做类型断言；断言失败当内部错误处理。
+//  4. loadLink 成功 → cacheLink(ctx, info) 后返回。
+//  5. loadLink 失败且是"确实不存在"（errors.Is(err, domain.ErrLinkNotFound)）→
+//     markMissing(ctx, shortCode) 后返回该错误。
+//     ⚠ 只有"确实不存在"才写否定缓存。**数据库连不上时绝不能写**：
+//     否则一次数据库故障会把"所有短码都不存在"这个结论写进 Redis，
+//     而且它会按 TTL 活过故障本身（原项目把这条写进了设计文档）。
+//     所以 loadLink 必须把"查不到"和"查不动"分成两种错误返回。
 //
 // 验收：go test ./internal/service/ -run TestGetByCode
 func (s *LinkService) GetByCode(ctx context.Context, shortCode string) (*domain.LinkInfo, error) {
@@ -156,7 +158,8 @@ func (s *LinkService) GetByCode(ctx context.Context, shortCode string) (*domain.
 //     （没设密码 = 谁都可以访问）。
 //  3. checkPassword(*link.PasswordHash, password) → 返回 (ok, 映射后的 LinkInfo, nil)。
 //
-// 验收：go test ./internal/service/ -run TestCheckPassword
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) CheckPassword(ctx context.Context, shortCode, password string) (bool, *domain.LinkInfo, error) {
 	return false, nil, todo.Err("LinkService.CheckPassword")
 }
@@ -165,29 +168,30 @@ func (s *LinkService) CheckPassword(ctx context.Context, shortCode, password str
 //
 // TODO(练习 30)：实现它。这是全项目最容易写出"能跑但会错"的 SQL 的地方。
 //
-//	1. 先 normalizePage(page, pageSize)（已给）。
-//	2. 拼条件切片 filters []string 和参数 args []any，第一个条件永远是 "l.user_id = ?"。
-//	   **归属是这个列表的第一个条件**，不是查完再过滤。
-//	3. 可选条件：
-//	   - search 非空 → "(l.title ILIKE ? OR l.original_url ILIKE ? OR l.short_code ILIKE ?)"，
-//	     三个参数都用 "%"+search+"%"（ILIKE 是 PostgreSQL 的大小写不敏感匹配）。
-//	   - folderID > 0 → "l.folder_id = ?"
-//	   - tagID > 0 → "l.id IN (SELECT link_id FROM link_tags WHERE tag_id = ?)"
-//	     （子查询而不是 JOIN：JOIN 会让"一条链接有多个标签"变成多行，把分页数搞乱。）
-//	   - workspaceID > 0 → "l.workspace_id = ?"
-//	4. 总数：先用同样的条件 Count 一次（返回给前端算页数）。
-//	5. 数据：Table("links AS l").Select("l.*, f.name AS folder_name").
-//	   Joins("LEFT JOIN folders AS f ON f.id = l.folder_id AND f.user_id = l.user_id").
-//	   Where(strings.Join(filters, " AND "), args...)。Order(...).Limit().Offset().
-//	   Scan(&[]linkListRow{})。
-//	6. 排序白名单：sort 参数**绝不能**直接拼进 SQL（那是最经典的注入了）。
-//	   只允许几个固定值映射到固定字符串，例如：
-//	   "created_desc" → "l.created_at DESC"，"created_asc" → "l.created_at ASC"，
-//	   "clicks_desc" → "l.click_count DESC"；其他一律用默认值。
-//	7. 标签：用 tagsForLinks(ctx, userID, ids) 一次性取全部（不要每行查一次，那是 N+1）。
-//	8. 组装 domain.PaginatedLinks{Links, TotalCount, Page, PageSize}。
+//  1. 先 normalizePage(page, pageSize)（已给）。
+//  2. 拼条件切片 filters []string 和参数 args []any，第一个条件永远是 "l.user_id = ?"。
+//     **归属是这个列表的第一个条件**，不是查完再过滤。
+//  3. 可选条件：
+//     - search 非空 → "(l.title ILIKE ? OR l.original_url ILIKE ? OR l.short_code ILIKE ?)"，
+//     三个参数都用 "%"+search+"%"（ILIKE 是 PostgreSQL 的大小写不敏感匹配）。
+//     - folderID > 0 → "l.folder_id = ?"
+//     - tagID > 0 → "l.id IN (SELECT link_id FROM link_tags WHERE tag_id = ?)"
+//     （子查询而不是 JOIN：JOIN 会让"一条链接有多个标签"变成多行，把分页数搞乱。）
+//     - workspaceID > 0 → "l.workspace_id = ?"
+//  4. 总数：先用同样的条件 Count 一次（返回给前端算页数）。
+//  5. 数据：Table("links AS l").Select("l.*, f.name AS folder_name").
+//     Joins("LEFT JOIN folders AS f ON f.id = l.folder_id AND f.user_id = l.user_id").
+//     Where(strings.Join(filters, " AND "), args...)。Order(...).Limit().Offset().
+//     Scan(&[]linkListRow{})。
+//  6. 排序白名单：sort 参数**绝不能**直接拼进 SQL（那是最经典的注入了）。
+//     只允许几个固定值映射到固定字符串，例如：
+//     "created_desc" → "l.created_at DESC"，"created_asc" → "l.created_at ASC"，
+//     "clicks_desc" → "l.click_count DESC"；其他一律用默认值。
+//  7. 标签：用 tagsForLinks(ctx, userID, ids) 一次性取全部（不要每行查一次，那是 N+1）。
+//  8. 组装 domain.PaginatedLinks{Links, TotalCount, Page, PageSize}。
 //
-// 验收：go test ./internal/service/ -run TestListLinks
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) List(ctx context.Context, userID int64, page, pageSize int, search string, folderID, tagID, workspaceID int64, sort string) (*domain.PaginatedLinks, error) {
 	return nil, todo.Err("LinkService.List")
 }
@@ -196,23 +200,24 @@ func (s *LinkService) List(ctx context.Context, userID int64, page, pageSize int
 //
 // TODO(练习 31)：实现它。
 //
-//	1. 先按 id + user_id 把行查出来（不存在 → domain.ErrLinkNotFound）。
-//	2. 逐字段应用"非 nil 才改"：
-//	   - OriginalURL：同样要 isSafeTarget 校验。
-//	   - ShortCode：校验形状 + shortCodeTaken(..., 排除自己)；
-//	     **改短码意味着旧短码要失效**，记下 oldCode。
-//	   - Password：空字符串表示"取消密码"（哈希置 NULL），非空则重新哈希。
-//	   - ExpiresAt：解析 RFC3339。
-//	   - IsActive / FolderID / WorkspaceID。
-//	3. 用 Updates(map[string]any{...}) 落库。
-//	   ⚠ 可空字段要清空时必须写 gorm.Expr("NULL") 或直接给 nil 值配合 Select，
-//	     因为 GORM 的 Updates(struct) 会忽略零值——`Updates(Link{FolderID: nil})`
-//	     永远不会把 folder_id 改回 NULL。原项目为此专门写过测试。
-//	4. 标签：先删 link_tags 里这条链接的旧记录，再 attachOwnedTags。
-//	5. 缓存：invalidate 旧短码和新短码（两个都要！改名前后的入口都不能留着旧数据）。
-//	6. 返回 toLinkInfo(...)。
+//  1. 先按 id + user_id 把行查出来（不存在 → domain.ErrLinkNotFound）。
+//  2. 逐字段应用"非 nil 才改"：
+//     - OriginalURL：同样要 isSafeTarget 校验。
+//     - ShortCode：校验形状 + shortCodeTaken(..., 排除自己)；
+//     **改短码意味着旧短码要失效**，记下 oldCode。
+//     - Password：空字符串表示"取消密码"（哈希置 NULL），非空则重新哈希。
+//     - ExpiresAt：解析 RFC3339。
+//     - IsActive / FolderID / WorkspaceID。
+//  3. 用 Updates(map[string]any{...}) 落库。
+//     ⚠ 可空字段要清空时必须写 gorm.Expr("NULL") 或直接给 nil 值配合 Select，
+//     因为 GORM 的 Updates(struct) 会忽略零值——`Updates(Link{FolderID: nil})`
+//     永远不会把 folder_id 改回 NULL。原项目为此专门写过测试。
+//  4. 标签：先删 link_tags 里这条链接的旧记录，再 attachOwnedTags。
+//  5. 缓存：invalidate 旧短码和新短码（两个都要！改名前后的入口都不能留着旧数据）。
+//  6. 返回 toLinkInfo(...)。
 //
-// 验收：go test ./internal/service/ -run TestUpdateLink
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) Update(ctx context.Context, linkID, userID int64, req domain.UpdateLinkRequest) (*domain.LinkInfo, error) {
 	return nil, todo.Err("LinkService.Update")
 }
@@ -226,7 +231,8 @@ func (s *LinkService) Update(ctx context.Context, linkID, userID int64, req doma
 //  3. invalidate(ctx, shortCode)。
 //  4. click_logs 会随外键 CASCADE 一起走（见 entity 里的约束）。
 //
-// 验收：go test ./internal/service/ -run TestDeleteLink
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) Delete(ctx context.Context, linkID, userID int64) error {
 	return todo.Err("LinkService.Delete")
 }
@@ -244,7 +250,8 @@ func (s *LinkService) Delete(ctx context.Context, linkID, userID int64) error {
 //
 // 注意 GORM 的 `IN ?` 写法（问号前不加括号）：它会正确展开成 ($1,$2,$3)。
 //
-// 验收：go test ./internal/service/ -run TestBatchDelete
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) BatchDelete(ctx context.Context, ids []int64, userID int64) (int64, error) {
 	return 0, todo.Err("LinkService.BatchDelete")
 }
@@ -260,7 +267,8 @@ func (s *LinkService) BatchDelete(ctx context.Context, ids []int64, userID int64
 //     或写成循环 + clause.OnConflict{DoNothing: true}。
 //     注意 link_tags 的主键是 (link_id, tag_id)，所以"重复打标签"天然被拒。
 //
-// 验收：go test ./internal/service/ -run TestBatchTag
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) BatchTag(ctx context.Context, ids []int64, tagID int64, userID int64) error {
 	return todo.Err("LinkService.BatchTag")
 }
@@ -270,19 +278,19 @@ func (s *LinkService) BatchTag(ctx context.Context, ids []int64, tagID int64, us
 // TODO(练习 35)：实现它。这个函数**没有返回值**，那正是重点：
 // 跳转的响应绝不能因为"点击没记上"而失败或变慢。
 //
-//	1. 造 event_id：randomID()（失败就用一个兜底值，绝不能因为随机数失败而丢掉点击）。
-//	2. 组装 mq.ClickEvent（字段来自 domain.ClickEvent，加上
-//	   EventID 与 CreatedAt: time.Now().UTC()）。
-//	3. s.kafka != nil → PublishClick。**必须用 defer/recover 包住这次调用**：
-//	   这个函数是在 handler 起的 goroutine 里跑的，而 Gin 的 recovery 只覆盖
-//	   "服务这个请求的那个 goroutine"。这里 panic 会直接结束进程——
-//	   原项目正是这样挂过：每次点击都调用一个 nil 接收者的方法 → panic → 进程退出 →
-//	   systemd 重启 → 那几秒的请求全部 502，而且**点击丢了**（降级路径根本没跑到）。
-//	4. publish 成功 → return。
-//	5. publish 失败或 panic → 把 panic 转成 error，走同一条降级路径：
-//	   s.clickWriter.WriteClick(ctx, event)。失败只 log。
-//	6. ⚠ 降级和 Kafka 必须用**同一个 event_id**：worker 和直写可能同时到达，
-//	   event_id 的 ON CONFLICT 是它们唯一不会各写一行的保证。
+//  1. 造 event_id：randomID()（失败就用一个兜底值，绝不能因为随机数失败而丢掉点击）。
+//  2. 组装 mq.ClickEvent（字段来自 domain.ClickEvent，加上
+//     EventID 与 CreatedAt: time.Now().UTC()）。
+//  3. s.kafka != nil → PublishClick。**必须用 defer/recover 包住这次调用**：
+//     这个函数是在 handler 起的 goroutine 里跑的，而 Gin 的 recovery 只覆盖
+//     "服务这个请求的那个 goroutine"。这里 panic 会直接结束进程——
+//     原项目正是这样挂过：每次点击都调用一个 nil 接收者的方法 → panic → 进程退出 →
+//     systemd 重启 → 那几秒的请求全部 502，而且**点击丢了**（降级路径根本没跑到）。
+//  4. publish 成功 → return。
+//  5. publish 失败或 panic → 把 panic 转成 error，走同一条降级路径：
+//     s.clickWriter.WriteClick(ctx, event)。失败只 log。
+//  6. ⚠ 降级和 Kafka 必须用**同一个 event_id**：worker 和直写可能同时到达，
+//     event_id 的 ON CONFLICT 是它们唯一不会各写一行的保证。
 //
 // 验收：go test ./internal/service/ -run TestLogClick
 func (s *LinkService) LogClick(ctx context.Context, e domain.ClickEvent) {
@@ -299,11 +307,12 @@ func (s *LinkService) LogClick(ctx context.Context, e domain.ClickEvent) {
 //  2. 查不到（isNotFound(err)）→ 返回 domain.ErrLinkNotFound
 //  3. 其他错误 → 用 fmt.Errorf("...: %w", err) 包一层返回
 //     （**不要**返回 ErrLinkNotFound！调用方靠这个区分"不存在"和"查不动"，
-//      把两者混在一起就等于让一次数据库故障变成"所有短码都不存在"。）
+//     把两者混在一起就等于让一次数据库故障变成"所有短码都不存在"。）
 //  4. 查到但 isLinkUsable 为假（停用/过期）→ 返回 domain.ErrLinkNotFound
 //     （对调用方来说，"停用了"和"不存在"是同一个答案。）
 //
-// 验收：go test ./internal/service/ -run TestLoadLinkErrorKinds
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) loadLink(ctx context.Context, shortCode string) (*domain.LinkInfo, error) {
 	return nil, todo.Err("LinkService.loadLink")
 }
@@ -347,7 +356,8 @@ func (s *LinkService) invalidate(ctx context.Context, shortCode string) {
 //  2. linkInfoFromEntity 得到基础信息。
 //  3. tagsForLinks(ctx, userID, []int64{linkID}) 补标签。
 //
-// 验收：go test ./internal/service/ -run TestToLinkInfo
+// 验收：本函数没有单独的单测。跑 `go test ./internal/service/` 确认这个包仍能编译；
+// 行为请按 README 第 3 节的冒烟流程验证。
 func (s *LinkService) toLinkInfo(ctx context.Context, linkID, userID int64) (*domain.LinkInfo, error) {
 	return nil, todo.Err("LinkService.toLinkInfo")
 }
@@ -443,7 +453,7 @@ func isLinkUsable(info *domain.LinkInfo, now time.Time) bool {
 //  1. HasPassword = (l.PasswordHash != nil) —— 只发布"有没有密码"这个事实。
 //  2. 其余字段直接搬运；ShortURL = s.BuildShortURL(l.Domain, l.ShortCode)。
 //     ⚠ 注意这是个方法而不是自由函数：它需要 s.baseURL。写成方法可以让测试
-//       构造一个只填了 baseURL 的 LinkService（不需要数据库）。
+//     构造一个只填了 baseURL 的 LinkService（不需要数据库）。
 //  3. Tags 初始化为空切片而不是 nil：JSON 里 `null` 和 `[]` 对前端是两种东西，
 //     而"没有标签"应该序列化成 []。原项目在 LinkInfo 上有过这条约定。
 //

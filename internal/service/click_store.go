@@ -36,8 +36,10 @@ func NewClickStore(db *gorm.DB) *ClickStore {
 //  1. kind 归一化：event.Kind 为空 → 当成 domain.ClickKind(domain.ClickRequest)。
 //     为什么不是 visit？因为"说不清它是不是一个人打开的"是唯一**绝不能计数**的答案。
 //     空值只可能来自旧版生产端，而旧版并不知道 kind 这回事。
+//
 //  2. 开事务：s.db.WithContext(ctx).Transaction(func(tx *gorm.DB) error { ... })
 //     插入和累加必须在同一个事务里，否则会出现"日志写了但计数没加"的中间状态。
+//
 //  3. 插入用**原生 SQL**，因为幂等性就写在这一句里：
 //
 //     INSERT INTO click_logs (link_id, ip, user_agent, platform, kind, referer, created_at, event_id)
@@ -47,11 +49,14 @@ func NewClickStore(db *gorm.DB) *ClickStore {
 //     Kafka 是 at-least-once：同一条消息可能被投递两次，降级直写也可能和 worker 撞车。
 //     event_id 上的唯一索引 + ON CONFLICT DO NOTHING 让第二次插入变成"什么都没发生"，
 //     这就是"点击计数必须准确"的全部依靠。
+//
 //  4. res.RowsAffected == 0 → 说明这条事件已经写过了 → return nil（提交，但**不要**再加计数）。
+//
 //  5. kind != domain.ClickVisit → return nil（这一行记下来了，但不动计数器）。
 //     为什么要记？因为"有多少请求是预取"本身是有价值的数据；
 //     为什么不动计数器？因为 links.click_count 和分析接口必须对"一次点击"有同一个定义，
 //     而不是一个过滤、另一个不过滤。
+//
 //  6. 最后 UPDATE links SET click_count = click_count + 1 WHERE id = ?。
 //
 // 用到的参数（按列顺序，共 8 个占位符）：

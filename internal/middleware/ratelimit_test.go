@@ -36,7 +36,7 @@ func hit(r *gin.Engine, ip string) int {
 
 // TestRateLimit 对应练习 4。
 func TestRateLimit(t *testing.T) {
-	client, _ := newMiniredisClient(t)
+	client, mr := newMiniredisClient(t)
 	rl := NewRateLimiter(client)
 
 	r := gin.New()
@@ -50,13 +50,26 @@ func TestRateLimit(t *testing.T) {
 		}
 	}
 
+	// 每次请求都必须在窗口里留下**自己的一条**记录。
+	//
+	// 这一条不是形式主义，是实测踩到的：member 只用时间戳时，Windows 上的时钟分辨率
+	// 可能粗到毫秒级，同一毫秒内的几个请求会写进同一个 member、互相覆盖，
+	// ZSET 里只留一条 —— 于是限流少算，第 4 次请求照样能过。
+	if members, _ := mr.ZMembers("ratelimit:203.0.113.1"); len(members) != 3 {
+		t.Errorf("3 次请求之后窗口里只有 %d 条记录（%v）：每个请求的 member 必须唯一", len(members), members)
+	}
+
 	// 第 4 次要被拦住，并且带上 Retry-After 语义的信息。
 	req := httptest.NewRequest(http.MethodGet, "/x", nil)
 	req.Header.Set("X-Real-IP", "203.0.113.1")
 	w := httptest.NewRecorder()
 	r.ServeHTTP(w, req)
 	if w.Code != http.StatusTooManyRequests {
-		t.Fatalf("第 4 次请求 = %d, want 429", w.Code)
+		// 失败时把 Redis 现场一起打出来：是"没记进去"（key/ZSET 为空 → 走的是 fail open）
+		// 还是"记了但没拦"（成员够数 → 比较那一步写错了），一眼就能分清。
+		members, _ := mr.ZMembers("ratelimit:203.0.113.1")
+		t.Fatalf("第 4 次请求 = %d, want 429；X-RateLimit-Remaining=%q；Redis keys=%v；ZSET 成员=%v",
+			w.Code, w.Header().Get("X-RateLimit-Remaining"), mr.Keys(), members)
 	}
 	if got := w.Header().Get("X-RateLimit-Limit"); got != "3" {
 		t.Errorf("X-RateLimit-Limit = %q, want \"3\"", got)

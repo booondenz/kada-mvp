@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/handler/httpx"
 	"kada-mvp/internal/middleware"
 )
 
@@ -44,7 +43,13 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup, authMW gin.HandlerFunc) {
 //
 // TODO(练习 84)：实现它。调服务 → 200 {"workspaces": workspaces}。
 func (h *Handler) List(c *gin.Context) {
-	httpx.NotImplemented(c, "workspace.List")
+	workspaces, err := h.svc.List(c.Request.Context(), middleware.GetUserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"workspaces": workspaces})
 }
 
 // Create 新建工作区。
@@ -54,14 +59,39 @@ func (h *Handler) List(c *gin.Context) {
 // 提示：slug 已存在时服务层会返回一个可读错误；MVP 统一按 400 回，
 // 想更准确的话可以学 auth 包，用一个哨兵错误映射成 409。
 func (h *Handler) Create(c *gin.Context) {
-	httpx.NotImplemented(c, "workspace.Create")
+	var req domain.CreateWorkspaceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "workspace name and slug are required"})
+		return
+	}
+
+	workspace, err := h.svc.Create(c.Request.Context(), middleware.GetUserID(c), req)
+	if err != nil {
+		// slug 已被占用也走这里：MVP 统一 400，想更准可以学 auth 包用哨兵错误映射成 409。
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"workspace": workspace})
 }
 
 // Get 取一个工作区。
 //
 // TODO(练习 86)：实现它。解析 id（失败 400）→ 调服务（失败 404）→ 200 {"workspace": workspace}。
 func (h *Handler) Get(c *gin.Context) {
-	httpx.NotImplemented(c, "workspace.Get")
+	workspaceID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid workspace ID"})
+		return
+	}
+
+	workspace, err := h.svc.GetByID(c.Request.Context(), workspaceID, middleware.GetUserID(c))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "workspace not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"workspace": workspace})
 }
 
 // Update 更新工作区。
@@ -69,19 +99,41 @@ func (h *Handler) Get(c *gin.Context) {
 // TODO(练习 87)：实现它。解析 id（失败 400）→ 绑定 domain.UpdateWorkspaceRequest
 // （失败 400）→ 调服务 → 200 {"workspace": workspace}。
 func (h *Handler) Update(c *gin.Context) {
-	httpx.NotImplemented(c, "workspace.Update")
+	workspaceID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid workspace ID"})
+		return
+	}
+
+	var req domain.UpdateWorkspaceRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
+
+	workspace, err := h.svc.Update(c.Request.Context(), workspaceID, middleware.GetUserID(c), req)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"workspace": workspace})
 }
 
 // Delete 删除工作区。
 //
 // TODO(练习 88)：实现它。解析 id（失败 400）→ 调服务（失败 404）→ 200 {"message": "workspace deleted"}。
 func (h *Handler) Delete(c *gin.Context) {
-	httpx.NotImplemented(c, "workspace.Delete")
-}
+	workspaceID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid workspace ID"})
+		return
+	}
 
-// 这些 import 是给你的实现准备的；填空阶段还没有被使用，用空引用保持编译通过，写完删掉。
-var (
-	_ = http.StatusCreated
-	_ = strconv.ParseInt
-	_ = middleware.GetUserID
-)
+	if err := h.svc.Delete(c.Request.Context(), workspaceID, middleware.GetUserID(c)); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "workspace deleted"})
+}

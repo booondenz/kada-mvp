@@ -2,13 +2,11 @@ package service
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"gorm.io/gorm"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/todo"
 )
 
 // AnalyticsService 回答"我的链接一共被点了多少次、什么时候点的、从哪里点的"。
@@ -36,7 +34,19 @@ func NewAnalyticsService(db *gorm.DB) *AnalyticsService {
 //	SELECT COUNT(*) AS total_links, COALESCE(SUM(click_count), 0) AS total_clicks
 //	  FROM links WHERE user_id = ?
 //
-// 用 s.db.WithContext(ctx).Model(&entity.Link{}).Select(...).Where("user_id = ?", userID).Scan(&out)。
+// 两种写法都行：
+//
+//	s.db.WithContext(ctx).Model(&entity.Link{}).
+//	    Select("COUNT(*) AS total_links, COALESCE(SUM(click_count), 0) AS total_clicks").
+//	    Where("user_id = ?", userID).Find(&out)
+//	// 或者直接手写 SQL：
+//	s.db.WithContext(ctx).Raw(`SELECT ... FROM links WHERE user_id = ?`, userID).Find(&out)
+//
+// ⚠ 这里有个会浪费半天的坑：**用 Find，不要用 Scan**。两者在真实数据库上执行的 SQL
+// 完全一样，但 Scan 走的是 sql.Rows 那条路，而 DryRun 会话不支持它——
+// gorm v1.31 的 Scan/Rows 会直接返回 ErrDryRunModeUnsupported（见 finisher_api.go 的 Rows()）。
+// 验收测试全部跑在 DryRun 上，所以用 Scan 会得到一个和你的 SQL 毫无关系的错误。
+// （`Model(...)` 那条路会把表名渲染成带引号的 "links"，测试的比较会忽略引号，两种风格都能过。）
 //
 // 两个细节：
 //   - **COALESCE(..., 0)**：一个还没有链接的用户，SUM 返回的是 NULL，
@@ -48,7 +58,26 @@ func NewAnalyticsService(db *gorm.DB) *AnalyticsService {
 //
 // 验收：go test ./internal/service/ -run TestOverview
 func (s *AnalyticsService) Overview(ctx context.Context, userID int64) (domain.Overview, error) {
-	return domain.Overview{}, todo.Err("AnalyticsService.Overview")
+	var out domain.Overview
+
+	// 这里手写 SQL 而不是 Model(&entity.Link{}).Select(...)：GORM 会把表名渲染成
+	// "links"（带双引号），于是语句里是 `FROM "links"`，而验收测试盯的是字面量
+	// `from links`。手写的另一个好处是 COALESCE 一眼可见——它不是装饰，
+	// 而是"还没有链接的用户"和"报错"之间的那一步。
+	//
+	// 用 Find 而不是 Scan：两者在真实数据库上执行的 SQL 完全一样，
+	// 但 Scan 走 sql.Rows 那条路，DryRun 会话会以 ErrDryRunModeUnsupported 结束
+	// （GORM 的 Scan/Rows 不支持 DryRun），而 Find 走 Query 回调。
+	if err := s.db.WithContext(ctx).
+		Raw(`SELECT COUNT(*) AS total_links,
+		            COALESCE(SUM(click_count), 0) AS total_clicks
+		       FROM links
+		      WHERE user_id = ?`, userID).
+		Find(&out).Error; err != nil {
+		return domain.Overview{}, err
+	}
+
+	return out, nil
 }
 
 // DailyTrend 返回最近 days 天的每日点击数（没有点击的日期也要出现，值为 0）。
@@ -77,7 +106,63 @@ func (s *AnalyticsService) Overview(ctx context.Context, userID int64) (domain.O
 //
 // 验收：go test ./internal/service/ -run TestDailyTrend
 func (s *AnalyticsService) DailyTrend(ctx context.Context, userID int64, days int) ([]domain.TrendPoint, error) {
-	return nil, todo.Err("AnalyticsService.DailyTrend")
+	days = clampTrendDays(days)
+
+	// 窗口从"今天（UTC）的零点"往前推 days-1 天，所以最后一个点就是今天。
+	now := nowUTC()
+	start := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC).
+		AddDate(0, 0, -(days - 1))
+
+	var rows []analyticsTrendRow
+	if err := s.db.WithContext(ctx).
+		Raw(`SELECT to_char(cl.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD') AS day,
+		            COUNT(*) AS clicks
+		       FROM click_logs AS cl
+		       JOIN links AS l ON l.id = cl.link_id
+		      WHERE l.user_id = ? AND cl.kind = ? AND cl.created_at >= ?
+		      GROUP BY day
+		      ORDER BY day`, userID, string(domain.ClickVisit), start).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
+
+	byDay := make(map[string]int64, len(rows))
+	for _, r := range rows {
+		byDay[r.Day] += r.Clicks
+	}
+
+	// SQL 只返回有点击的那些天，缺的日期在这里补成 0——缺一天会让折线把
+	// "3 天前"和"10 天前"画成相邻的两点，那是一条看起来完全正常的错误曲线。
+	points := make([]domain.TrendPoint, 0, days)
+	for i := 0; i < days; i++ {
+		day := start.AddDate(0, 0, i).Format("2006-01-02")
+		points = append(points, domain.TrendPoint{Day: day, Clicks: byDay[day]})
+	}
+
+	return points, nil
+}
+
+// clampTrendDays 把客户端传进来的 days 夹到 [1, 365]；<=0 用默认的 30 天。
+func clampTrendDays(days int) int {
+	if days <= 0 {
+		return 30
+	}
+	if days > 365 {
+		return 365
+	}
+	return days
+}
+
+// analyticsTrendRow 是每日趋势那条聚合查询的一行。
+type analyticsTrendRow struct {
+	Day    string
+	Clicks int64
+}
+
+// analyticsPlatformRow 是平台分布那条聚合查询的一行。
+type analyticsPlatformRow struct {
+	Platform string
+	Clicks   int64
 }
 
 // PlatformBreakdown 返回按平台分组的点击数。
@@ -99,11 +184,23 @@ func (s *AnalyticsService) DailyTrend(ctx context.Context, userID int64, days in
 //
 // 验收：go test ./internal/service/ -run TestPlatformBreakdown
 func (s *AnalyticsService) PlatformBreakdown(ctx context.Context, userID int64) ([]domain.PlatformCount, error) {
-	return nil, todo.Err("AnalyticsService.PlatformBreakdown")
-}
+	var rows []analyticsPlatformRow
+	if err := s.db.WithContext(ctx).
+		Raw(`SELECT COALESCE(cl.platform, 'unknown') AS platform,
+		            COUNT(*) AS clicks
+		       FROM click_logs AS cl
+		       JOIN links AS l ON l.id = cl.link_id
+		      WHERE l.user_id = ? AND cl.kind = ?
+		      GROUP BY platform
+		      ORDER BY clicks DESC`, userID, string(domain.ClickVisit)).
+		Find(&rows).Error; err != nil {
+		return nil, err
+	}
 
-// compile-time 引用，避免 fmt / time 在填空阶段被误报为未使用（写完删掉）。
-var (
-	_ = fmt.Sprintf
-	_ = time.Now
-)
+	out := make([]domain.PlatformCount, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, domain.PlatformCount{Platform: r.Platform, Clicks: r.Clicks})
+	}
+
+	return out, nil
+}

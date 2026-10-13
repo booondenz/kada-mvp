@@ -13,7 +13,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/handler/httpx"
 	"kada-mvp/internal/middleware"
 )
 
@@ -69,7 +68,19 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup, authMW gin.HandlerFunc) {
 //
 // 验收：go test ./internal/handler/link/ -run TestCreate
 func (h *Handler) Create(c *gin.Context) {
-	httpx.NotImplemented(c, "link.Create")
+	var req domain.CreateLinkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "valid link details are required: " + err.Error()})
+		return
+	}
+
+	link, err := h.svc.Create(c.Request.Context(), middleware.GetUserID(c), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"link": link})
 }
 
 // List 分页列出链接。
@@ -85,7 +96,34 @@ func (h *Handler) Create(c *gin.Context) {
 //
 // 验收：go test ./internal/handler/link/ -run TestList
 func (h *Handler) List(c *gin.Context) {
-	httpx.NotImplemented(c, "link.List")
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	pageSize, _ := strconv.Atoi(c.DefaultQuery("page_size", "20"))
+	folderID, _ := strconv.ParseInt(c.DefaultQuery("folder_id", "0"), 10, 64)
+	tagID, _ := strconv.ParseInt(c.DefaultQuery("tag_id", "0"), 10, 64)
+	workspaceID, _ := strconv.ParseInt(c.DefaultQuery("workspace_id", "0"), 10, 64)
+
+	result, err := h.svc.List(
+		c.Request.Context(),
+		middleware.GetUserID(c),
+		page,
+		pageSize,
+		c.Query("search"),
+		folderID,
+		tagID,
+		workspaceID,
+		c.DefaultQuery("sort", "created_desc"),
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"links":       result.Links,
+		"total_count": result.TotalCount,
+		"page":        result.Page,
+		"page_size":   result.PageSize,
+	})
 }
 
 // Get 取单条链接。
@@ -97,7 +135,20 @@ func (h *Handler) List(c *gin.Context) {
 //     应该是同一个答案——区分它们等于提供一个"探测别人有哪些 id"的接口。
 //  3. 成功 → 200 {"link": link}。
 func (h *Handler) Get(c *gin.Context) {
-	httpx.NotImplemented(c, "link.Get")
+	linkID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid link ID"})
+		return
+	}
+
+	link, err := h.svc.GetByID(c.Request.Context(), linkID, middleware.GetUserID(c))
+	if err != nil {
+		// 「不是你的」和「不存在」共用 404：区分它们等于提供一个探测别人 id 的接口。
+		c.JSON(http.StatusNotFound, gin.H{"error": "link not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"link": link})
 }
 
 // Update 更新链接。
@@ -107,14 +158,43 @@ func (h *Handler) Get(c *gin.Context) {
 //  2. 绑定 domain.UpdateLinkRequest（失败 → 400 "invalid request parameters"）。
 //  3. 调服务；失败 → 404 + err.Error()；成功 → 200 {"link": link}。
 func (h *Handler) Update(c *gin.Context) {
-	httpx.NotImplemented(c, "link.Update")
+	linkID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid link ID"})
+		return
+	}
+
+	var req domain.UpdateLinkRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
+
+	link, err := h.svc.Update(c.Request.Context(), linkID, middleware.GetUserID(c), req)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"link": link})
 }
 
 // Delete 删除链接。
 //
 // TODO(练习 68)：实现它。解析 id（失败 400）→ 调服务（失败 404）→ 200 {"message": "link deleted"}。
 func (h *Handler) Delete(c *gin.Context) {
-	httpx.NotImplemented(c, "link.Delete")
+	linkID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid link ID"})
+		return
+	}
+
+	if err := h.svc.Delete(c.Request.Context(), linkID, middleware.GetUserID(c)); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "link deleted"})
 }
 
 // BatchDelete 批量删除。
@@ -126,7 +206,21 @@ func (h *Handler) Delete(c *gin.Context) {
 //  2. 调服务，返回 200 {"deleted": count}（count 是**实际删掉的行数**，
 //     而不是请求里的 id 个数——两者在"其中一些不是你的"时不一样）。
 func (h *Handler) BatchDelete(c *gin.Context) {
-	httpx.NotImplemented(c, "link.BatchDelete")
+	var req struct {
+		IDs []int64 `json:"ids" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "link ID list is required"})
+		return
+	}
+
+	deleted, err := h.svc.BatchDelete(c.Request.Context(), req.IDs, middleware.GetUserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"deleted": deleted})
 }
 
 // BatchTag 批量打标签。
@@ -135,13 +229,19 @@ func (h *Handler) BatchDelete(c *gin.Context) {
 //  1. 绑定 struct{ IDs []int64; TagID int64 }（都 required）→ 失败 400。
 //  2. 调服务 → 成功 200 {"message": "tags applied successfully"}。
 func (h *Handler) BatchTag(c *gin.Context) {
-	httpx.NotImplemented(c, "link.BatchTag")
-}
+	var req struct {
+		IDs   []int64 `json:"ids" binding:"required"`
+		TagID int64   `json:"tag_id" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
 
-// 这些 import 是给你的实现准备的（net/http / strconv / middleware）；
-// 填空阶段它们还没有被使用，用下面这个空引用保持编译通过。写完删掉。
-var (
-	_ = http.StatusCreated
-	_ = strconv.ParseInt
-	_ = middleware.GetUserID
-)
+	if err := h.svc.BatchTag(c.Request.Context(), req.IDs, req.TagID, middleware.GetUserID(c)); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "tags applied successfully"})
+}

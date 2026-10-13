@@ -2,9 +2,11 @@ package middleware
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -48,6 +50,15 @@ func NewRateLimiter(client *redis.Client) *RateLimiter {
 	return &RateLimiter{client: client}
 }
 
+// limiterSeq 给每个请求一个进程内唯一的编号，用在下文的 ZSET member 上。
+//
+// 为什么不能只用时间戳当 member？因为那是一个"在 Linux 上看不出来"的 bug：
+// Linux 的墙钟分辨率接近纳秒，两次请求几乎不可能撞上；而 Windows 的时钟分辨率
+// 可能粗到毫秒级，同一毫秒内的几个请求会写出**同一个 member**，
+// ZADD 于是变成覆盖而不是新增 —— 窗口里始终只有一条记录，限流形同虚设。
+// （原项目用的是纯时间戳，它在 Linux 上跑得没问题，但这个前提不该被写进设计里。）
+var limiterSeq atomic.Int64
+
 // Limit 返回一档限流的 Gin 中间件。
 //
 // TODO(练习 4)：实现滑动窗口限流。
@@ -57,17 +68,23 @@ func NewRateLimiter(client *redis.Client) *RateLimiter {
 // 再数剩下的、然后把本次请求加进去。
 //
 // 要求：
+//
 //  1. KeyFunc 为 nil 时用 defaultKeyFunc（按 IP 分桶）。
 //     key 加前缀 "ratelimit:"，否则会和缓存用的 key 撞在一个命名空间里。
+//
 //  2. now := time.Now().UnixNano()；windowStart := now - cfg.Window.Nanoseconds()。
+//
 //  3. 用一条 Pipeline（一次往返）依次执行：
 //     - ZRemRangeByScore(key, "0", windowStart)：清掉窗口外的记录
 //     - ZCard(key)：数窗口内的记录数（**必须在 ZAdd 之前数**，否则本次请求会把自己算进去）
 //     - ZAdd(key, now, now)：把本次请求记进去
 //     - Expire(key, cfg.Window*2)：给 key 一个过期时间，否则冷 key 永远留在 Redis 里
+//
 //  4. Pipeline 执行失败 → **直接 c.Next() 放行**（fail open）。
 //     这是本项目的立场：Redis 挂了宁可暂时不拦，也不能让整个 API 变成 429 或 500。
+//
 //  5. 设置响应头 X-RateLimit-Limit 和 X-RateLimit-Remaining（remaining 最小为 0）。
+//
 //  6. 如果 count >= Limit → 429：
 //
 //     c.JSON(http.StatusTooManyRequests, gin.H{
@@ -88,14 +105,49 @@ func (rl *RateLimiter) Limit(cfg RateLimitConfig) gin.HandlerFunc {
 	}
 
 	return func(c *gin.Context) {
-		// 骨架先放行（fail open）：这样即使限流还没写，服务也能正常跑，
-		// 其他模块的填空不受影响。填完后请把这段换成上面 7 步的实现。
-		//
-		// 下面两行只是为了让 fmt 和 net/http 的 import 不报错（实现里会用到
-		// fmt.Sprintf 造 ZSET 成员、http.StatusTooManyRequests 造 429 响应），
-		// 你写完实现后把它们删掉：
-		_ = fmt.Sprintf
-		_ = http.StatusTooManyRequests
+		key := "ratelimit:" + cfg.KeyFunc(c)
+		now := time.Now().UnixNano()
+		windowStart := now - cfg.Window.Nanoseconds()
+
+		pipe := rl.client.Pipeline()
+		pipe.ZRemRangeByScore(c.Request.Context(), key, "0", fmt.Sprintf("%d", windowStart))
+		cardCmd := pipe.ZCard(c.Request.Context(), key)
+		pipe.ZAdd(c.Request.Context(), key, redis.Z{
+			Score: float64(now),
+			// member 用"时间戳-序号"：时间戳负责 score（窗口比较），序号保证每个请求
+			// 都是窗口里独立的一条。见 limiterSeq 的注释。
+			Member: fmt.Sprintf("%d-%d", now, limiterSeq.Add(1)),
+		})
+		pipe.Expire(c.Request.Context(), key, cfg.Window*2)
+
+		if _, err := pipe.Exec(c.Request.Context()); err != nil {
+			// fail open：Redis 挂了宁可暂时不拦，也不能让整个 API 变成 429 或 500。
+			//
+			// 但**不能默默放行**：一句日志是这个取舍的记账单。没有它，
+			// "限流好像没生效"在生产上会变成一个查不出来的问题——代码看起来是对的，
+			// 而唯一知道真相的地方（这里的 err）被丢掉了。
+			log.Printf("rate limit pipeline failed for %q, failing open: %v", cfg.KeyFunc(c), err)
+			c.Next()
+			return
+		}
+
+		count := int(cardCmd.Val())
+		remaining := cfg.Limit - count
+		if remaining < 0 {
+			remaining = 0
+		}
+		c.Header("X-RateLimit-Limit", fmt.Sprintf("%d", cfg.Limit))
+		c.Header("X-RateLimit-Remaining", fmt.Sprintf("%d", remaining))
+
+		if count >= cfg.Limit {
+			c.JSON(http.StatusTooManyRequests, gin.H{
+				"error":               "too many requests, please try again later",
+				"retry_after_seconds": int(cfg.Window.Seconds()),
+			})
+			c.Abort()
+			return
+		}
+
 		c.Next()
 	}
 }

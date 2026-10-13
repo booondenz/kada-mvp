@@ -15,8 +15,6 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
-
-	"kada-mvp/internal/todo"
 )
 
 // ClickEvent 是一次点击的消息载荷：生产端（API）和消费端（worker）共用同一个结构体。
@@ -24,11 +22,11 @@ import (
 // 共用一个结构体是刻意的：如果两端各写一个，那么"字段改了但只改了一边"这种错误
 // 只会在运行时以反序列化出零值的形式出现，而那种错误看起来像"数据丢了"。
 type ClickEvent struct {
-	EventID   string    `json:"event_id"` // 幂等键，worker 靠它去重
-	LinkID    int64     `json:"link_id"`
-	IP        string    `json:"ip"`
-	UserAgent string    `json:"user_agent"`
-	Platform  string    `json:"platform"`
+	EventID   string `json:"event_id"` // 幂等键，worker 靠它去重
+	LinkID    int64  `json:"link_id"`
+	IP        string `json:"ip"`
+	UserAgent string `json:"user_agent"`
+	Platform  string `json:"platform"`
 	// Kind 说明这条事件"是什么的证据"（domain.ClickKind）。
 	// 它跟着事件走，而不是在写入时现算：只有请求所在的位置知道
 	// 页面是被服务了（可能是预取）还是客户端直接去了目标地址。
@@ -78,8 +76,25 @@ type KafkaClickPublisher struct {
 //
 // 验收：go test ./internal/mq/ -run TestNewKafkaClickPublisher
 func NewKafkaClickPublisher(brokers []string, topic string) *KafkaClickPublisher {
-	_ = strings.TrimSpace
-	return nil
+	validBrokers := make([]string, 0, len(brokers))
+	for _, b := range brokers {
+		if b = strings.TrimSpace(b); b != "" {
+			validBrokers = append(validBrokers, b)
+		}
+	}
+	if len(validBrokers) == 0 {
+		// nil 是有语义的：调用方据此走"点击直接写库"的降级路径。
+		return nil
+	}
+
+	return &KafkaClickPublisher{
+		writer: &kafka.Writer{
+			Addr:         kafka.TCP(validBrokers...),
+			Topic:        topic,
+			Balancer:     &kafka.LeastBytes{},
+			RequiredAcks: kafka.RequireOne,
+		},
+	}
 }
 
 // PublishClick 把事件序列化成 JSON 写进 topic。
@@ -97,11 +112,16 @@ func NewKafkaClickPublisher(brokers []string, topic string) *KafkaClickPublisher
 //
 // 验收：go test ./internal/mq/ -run TestPublishClick
 func (p *KafkaClickPublisher) PublishClick(ctx context.Context, e ClickEvent) error {
-	// 这两行只是为了让 encoding/json 和 errors 的 import 在填空阶段不报错
-	// （实现里会用到 json.Marshal 和 errors.New），写完删掉：
-	_, _ = json.Marshal, errors.New
-	_, _ = ctx, e
-	return todo.Err("mq.KafkaClickPublisher.PublishClick")
+	if p == nil {
+		return errors.New("the kafka publisher is not configured")
+	}
+
+	b, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+
+	return p.writer.WriteMessages(ctx, kafka.Message{Value: b})
 }
 
 // Close 关闭底层 writer（已给）。

@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/handler/httpx"
 	"kada-mvp/internal/middleware"
 )
 
@@ -46,7 +45,14 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup, authMW gin.HandlerFunc) {
 //
 // 验收：go test ./internal/handler/analytics/ -run TestOverview
 func (h *Handler) Overview(c *gin.Context) {
-	httpx.NotImplemented(c, "analytics.Overview")
+	overview, err := h.svc.Overview(c.Request.Context(), middleware.GetUserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 只有一个返回物，直接透传：再包一层只会让前端多写一次解构。
+	c.JSON(http.StatusOK, overview)
 }
 
 // Trend 每日趋势。
@@ -57,20 +63,27 @@ func (h *Handler) Overview(c *gin.Context) {
 //
 // 验收：go test ./internal/handler/analytics/ -run TestTrend
 func (h *Handler) Trend(c *gin.Context) {
-	httpx.NotImplemented(c, "analytics.Trend")
+	// 坏参数退化成 0，由服务层夹紧范围——不该让它变成一次 500。
+	days, _ := strconv.Atoi(c.DefaultQuery("days", "30"))
+
+	points, err := h.svc.DailyTrend(c.Request.Context(), middleware.GetUserID(c), days)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"points": points})
 }
 
 // Platforms 平台分布。
 //
 // TODO(练习 76)：实现它。调服务 → 200 {"platforms": platforms}。
 func (h *Handler) Platforms(c *gin.Context) {
-	httpx.NotImplemented(c, "analytics.Platforms")
-}
+	platforms, err := h.svc.PlatformBreakdown(c.Request.Context(), middleware.GetUserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
-// 这些 import 是给你的实现准备的（net/http / strconv / middleware）；
-// 填空阶段它们还没有被使用，用下面这个空引用保持编译通过。写完删掉。
-var (
-	_ = http.StatusOK
-	_ = strconv.Atoi
-	_ = middleware.GetUserID
-)
+	c.JSON(http.StatusOK, gin.H{"platforms": platforms})
+}

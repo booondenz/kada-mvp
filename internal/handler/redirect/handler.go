@@ -16,7 +16,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/handler/httpx"
 	"kada-mvp/internal/infra/ua"
 	"kada-mvp/internal/middleware"
 )
@@ -91,23 +90,23 @@ func platformOf(c *gin.Context) domain.Platform {
 //
 // TODO(练习 71)：实现它。分支顺序就是语义顺序：
 //
-//	1. code := c.Param("code")
-//	2. link, err := h.svc.GetByCode(ctx, code)
-//	   err != nil → 404 + 纯文本 "link not found or expired"
-//	   （这里用 c.String 而不是 JSON：这个 URL 是给人点的，浏览器直接展示这段文字，
-//	    而 `{"error":"..."}` 显示出来是一串让人困惑的符号。）
-//	3. link.HasPassword → 200 + text/html + passwordPageHTML(code)
-//	   （**在这一步之前不要记录点击**：还没证明访问者能打开它。
-//	     密码页本身是"服务了一个页面"，不是一次访问。）
-//	4. userAgent := c.GetHeader("User-Agent")；platform := ua.Detect(userAgent)
-//	5. 平台需要中间页（ua.NeedsIntermediatePage(platform)）→
-//	   - record 一条 Kind=domain.ClickRequest 的事件（页面被服务了，但还没人确认），
-//	     Referer 用 c.GetHeader("Referer")（**这一行才是访问者真正的来路**）；
-//	   - 回 200 + text/html + guidePageHTML(link)。
-//	6. 否则（可以直接跳）→ record 一条 Kind=evidenceKind(userAgent, platform) 的事件，
-//	   然后 c.Redirect(http.StatusFound, link.OriginalURL)。
-//	7. ⚠ 顺序：先 record，再写响应。反过来的话，响应已经发出时再去 spawn
-//	   goroutine 记录，在"进程紧接着退出"这种极端情况下更容易把点击丢掉。
+//  1. code := c.Param("code")
+//  2. link, err := h.svc.GetByCode(ctx, code)
+//     err != nil → 404 + 纯文本 "link not found or expired"
+//     （这里用 c.String 而不是 JSON：这个 URL 是给人点的，浏览器直接展示这段文字，
+//     而 `{"error":"..."}` 显示出来是一串让人困惑的符号。）
+//  3. link.HasPassword → 200 + text/html + passwordPageHTML(code)
+//     （**在这一步之前不要记录点击**：还没证明访问者能打开它。
+//     密码页本身是"服务了一个页面"，不是一次访问。）
+//  4. userAgent := c.GetHeader("User-Agent")；platform := ua.Detect(userAgent)
+//  5. 平台需要中间页（ua.NeedsIntermediatePage(platform)）→
+//     - record 一条 Kind=domain.ClickRequest 的事件（页面被服务了，但还没人确认），
+//     Referer 用 c.GetHeader("Referer")（**这一行才是访问者真正的来路**）；
+//     - 回 200 + text/html + guidePageHTML(link)。
+//  6. 否则（可以直接跳）→ record 一条 Kind=evidenceKind(userAgent, platform) 的事件，
+//     然后 c.Redirect(http.StatusFound, link.OriginalURL)。
+//  7. ⚠ 顺序：先 record，再写响应。反过来的话，响应已经发出时再去 spawn
+//     goroutine 记录，在"进程紧接着退出"这种极端情况下更容易把点击丢掉。
 //
 // 关于 302 而不是 301：301 会被浏览器**永久**缓存，之后即使这条链接被停用、
 // 被改目标，访问者也不会再回到我们这里——点击数直接归零，而且我们根本不知道。
@@ -115,7 +114,49 @@ func platformOf(c *gin.Context) domain.Platform {
 //
 // 验收：go test ./internal/handler/redirect/ -run TestRedirect
 func (h *Handler) Redirect(c *gin.Context) {
-	httpx.NotImplemented(c, "redirect.Redirect")
+	code := c.Param("code")
+
+	link, err := h.svc.GetByCode(c.Request.Context(), code)
+	if err != nil {
+		// 纯文本而不是 JSON：这个 URL 是给人点的，浏览器会把 body 直接显示出来。
+		c.String(http.StatusNotFound, "link not found or expired")
+		return
+	}
+
+	// 还没证明访问者能打开它，所以这一趟不记点击。
+	if link.HasPassword {
+		// 页面已经是一个完整的 HTML 字符串了，直接用 c.Data 送出去：
+		// 它不需要、也不该去碰模板引擎（没有模板文件、没有转义规则要维护）。
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(passwordPageHTML(code)))
+		return
+	}
+
+	userAgent := c.GetHeader("User-Agent")
+	platform := ua.Detect(userAgent)
+
+	if ua.NeedsIntermediatePage(platform) {
+		// 页面被服务了，但还没有人确认——这一行是 request，不是 visit。
+		h.record(c, domain.ClickEvent{
+			LinkID:    link.ID,
+			UserAgent: userAgent,
+			Platform:  platform,
+			Kind:      domain.ClickRequest,
+			Referer:   c.GetHeader("Referer"),
+		})
+		c.Data(http.StatusOK, "text/html; charset=utf-8", []byte(guidePageHTML(link)))
+		return
+	}
+
+	// 先 record 再写响应：反过来会让响应发出后的那段时间更容易丢掉点击。
+	h.record(c, domain.ClickEvent{
+		LinkID:    link.ID,
+		UserAgent: userAgent,
+		Platform:  platform,
+		Kind:      evidenceKind(userAgent, platform),
+		Referer:   c.GetHeader("Referer"),
+	})
+	// 302 而不是 301：301 会被浏览器永久缓存，之后链接停用/改目标都不会再回到这里。
+	c.Redirect(http.StatusFound, link.OriginalURL)
 }
 
 // VerifyPassword 校验访问密码。
@@ -132,7 +173,34 @@ func (h *Handler) Redirect(c *gin.Context) {
 //
 // 验收：go test ./internal/handler/redirect/ -run TestVerifyPassword
 func (h *Handler) VerifyPassword(c *gin.Context) {
-	httpx.NotImplemented(c, "redirect.VerifyPassword")
+	var req struct {
+		Password string `json:"password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "password is required"})
+		return
+	}
+
+	ok, link, err := h.svc.CheckPassword(c.Request.Context(), c.Param("code"), req.Password)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "link not found or expired"})
+		return
+	}
+	if !ok {
+		c.JSON(http.StatusUnauthorized, gin.H{"error": "incorrect password"})
+		return
+	}
+
+	// 密码被证明是对方知道的，现在这次访问才是确凿的。
+	userAgent := c.GetHeader("User-Agent")
+	h.record(c, domain.ClickEvent{
+		LinkID:    link.ID,
+		UserAgent: userAgent,
+		Platform:  ua.Detect(userAgent),
+		Kind:      domain.ClickVisit,
+		Referer:   c.GetHeader("Referer"),
+	})
+	c.Redirect(http.StatusFound, link.OriginalURL)
 }
 
 // ConfirmVisit 由页面自己调用，确认"这次访问真的有人在看"。
@@ -152,12 +220,23 @@ func (h *Handler) VerifyPassword(c *gin.Context) {
 //
 // 验收：go test ./internal/handler/redirect/ -run TestConfirmVisit
 func (h *Handler) ConfirmVisit(c *gin.Context) {
-	httpx.NotImplemented(c, "redirect.ConfirmVisit")
-}
+	link, err := h.svc.GetByCode(c.Request.Context(), c.Param("code"))
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": "link not found or expired"})
+		return
+	}
 
-// 这个空引用是给你的实现准备的（net/http）：填空阶段它还没有被使用，
-// 用它保持编译通过。写完删掉。
-var _ = http.StatusFound
+	userAgent := c.GetHeader("User-Agent")
+	// 刻意不带 Referer：这个 POST 的来源是我们自己刚服务出去的页面。
+	h.record(c, domain.ClickEvent{
+		LinkID:    link.ID,
+		UserAgent: userAgent,
+		Platform:  ua.Detect(userAgent),
+		Kind:      domain.ClickVisit,
+	})
+
+	c.JSON(http.StatusOK, gin.H{"ok": true})
+}
 
 // guidePageHTML 渲染中间引导页（已给）。
 //

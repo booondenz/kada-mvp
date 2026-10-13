@@ -10,7 +10,6 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/todo"
 )
 
 // missingTTL 是一个"查过、不存在"的短码会被记住多久。
@@ -53,65 +52,81 @@ func NewCacheService(client *redis.Client) *CacheService {
 
 // key 拼缓存键。
 //
-// TODO(练习 18)：实现它。格式：fmt.Sprintf("cache:%s:%s", prefix, identifier)。
+// 格式：cache:<prefix>:<identifier>。
 // 前缀是必须的：Redis 是一个共用命名空间，限流用的键是 "ratelimit:..."，
 // 少了前缀迟早会撞上。
 func (cs *CacheService) key(prefix, identifier string) string {
-	return todo.String("CacheService.key")
+	return fmt.Sprintf("cache:%s:%s", prefix, identifier)
 }
 
 // GetLink 按短码取链接。
-//
-// TODO(练习 19)：实现它。
-//
-//  1. cs.client.Get(ctx, cs.key("link", shortCode)).Bytes()
-//  2. 任何错误（包括 redis.Nil 表示键不存在）→ return nil, false。
-//     缓存读取失败永远不该变成业务失败：未命中的代价只是一次数据库查询。
-//  3. json.Unmarshal 失败 → 同样 return nil, false。
-//     为什么不返回错误？因为这里的调用方只有一种合理反应——当它没有缓存。
-//     把"缓存坏了"和"业务错了"分成两条错误路径，只会让热路径多一个分支。
-//  4. 成功 → &info, true。
-//
-// 验收：go test ./internal/service/ -run TestCacheServiceLinkRoundTrip
 func (cs *CacheService) GetLink(ctx context.Context, shortCode string) (*domain.LinkInfo, bool) {
-	return nil, false
+	data, err := cs.client.Get(ctx, cs.key("link", shortCode)).Bytes()
+	if err != nil {
+		// 任何错误（包括 redis.Nil 表示键不存在）都当成"没有缓存"：
+		// 缓存读取失败永远不该变成业务失败——未命中的代价只是一次数据库查询。
+		return nil, false
+	}
+
+	var info domain.LinkInfo
+	if err := json.Unmarshal(data, &info); err != nil {
+		// 这里的调用方只有一种合理反应——当它没有缓存。所以不返回错误：
+		// 把"缓存坏了"和"业务错了"分成两条错误路径，只会让热路径多一个分支。
+		return nil, false
+	}
+	return &info, true
 }
 
 // SetLink 缓存一条链接。
-//
-// TODO(练习 20)：实现它。这里有个**容易被忽略的正确性问题**：
-//
-//  1. 基础 TTL 是 cs.ttl（10 分钟）。
-//  2. 但 cache-aside 缓存绝不能比它缓存的事实活得更久：
-//     如果链接 3 分钟后过期，而你把它缓存 10 分钟，那么"已过期"这件事
-//     会晚 7 分钟才生效——访问者会一直跳转到一个本该失效的链接上。
-//     所以 TTL 要取 min(cs.ttl, time.Until(*info.ExpiresAt))，
-//     并且如果算出来 <= 0，直接**不缓存**。
-//     注意 info.ExpiresAt 是 *time.Time（可以为 nil = 永不过期）。
-//  3. json.Marshal 失败 → 直接 return（缓存写失败不该影响主流程）。
-//  4. cs.client.Set(ctx, key, data, ttl)。
-//     写入失败要 log 一行：静默失败会让"缓存好像没生效"变成一个查不出来的问题。
-//
-// 验收：go test ./internal/service/ -run TestCacheServiceSetLinkRespectsExpiry
 func (cs *CacheService) SetLink(ctx context.Context, info *domain.LinkInfo) {
-	todo.Stub("CacheService.SetLink")
+	if info == nil {
+		return
+	}
+
+	// cache-aside 缓存绝不能比它缓存的事实活得更久：如果链接 3 分钟后过期，
+	// 而缓存写 10 分钟，那么"已过期"这件事会晚 7 分钟才生效，
+	// 访问者会一直跳转到一个本该失效的链接上。
+	ttl := cs.ttl
+	if info.ExpiresAt != nil {
+		remaining := time.Until(*info.ExpiresAt)
+		if remaining <= 0 {
+			// 已经过期的链接根本不该被缓存。
+			return
+		}
+		if remaining < ttl {
+			ttl = remaining
+		}
+	}
+
+	data, err := json.Marshal(info)
+	if err != nil {
+		// 缓存写失败不该影响主流程，但也不能一声不吭：静默失败会让
+		// "缓存好像没生效"变成一个查不出来的问题。
+		log.Printf("marshal link %q for cache failed: %v", info.ShortCode, err)
+		return
+	}
+
+	if err := cs.client.Set(ctx, cs.key("link", info.ShortCode), data, ttl).Err(); err != nil {
+		log.Printf("cache link %q failed: %v", info.ShortCode, err)
+	}
 }
 
 // InvalidateLink 让一条链接的缓存失效。
 //
-// TODO(练习 21)：实现它。**两个键都要删**：
+// **两个键都要删**：
 //   - cache:link:<code>
 //   - cache:linkmiss:<code>
 //
 // 为什么第二个也要删？因为一个刚刚被创建/改名的短码，可能还挂着一条
 // "这个码不存在"的记录（60 秒）。不删它，新链接在最多 60 秒内会被自己的否定缓存挡住。
-//
-// 删除失败要 log，不能静默吞掉：跳转路径信任缓存里的"是否需要密码"这个字段，
-// 一次失败的 DEL 意味着旧的（可能不带密码的）入口还会继续生效到 TTL 结束。
-//
-// 验收：go test ./internal/service/ -run TestCacheServiceInvalidateClearsBothKeys
 func (cs *CacheService) InvalidateLink(ctx context.Context, shortCode string) {
-	todo.Stub("CacheService.InvalidateLink")
+	keys := []string{cs.key("link", shortCode), cs.missingKey(shortCode)}
+	// 一次 DEL 删两个键，省一次往返。删除失败不能静默吞掉：
+	// 跳转路径信任缓存里的"是否需要密码"这个字段，一次失败的 DEL 意味着
+	// 旧的（可能不带密码的）入口还会继续生效到 TTL 结束。
+	if err := cs.client.Del(ctx, keys...).Err(); err != nil {
+		log.Printf("invalidate cache keys %v failed: %v", keys, err)
+	}
 }
 
 // missingKey 是"这个短码不存在"用的独立键（已给）。
@@ -137,26 +152,18 @@ func (cs *CacheService) ClearMissing(ctx context.Context, shortCode string) {
 }
 
 // IsMissing 报告这个短码是否被记为不存在。
-//
-// TODO(练习 24)：实现它。用 Exists 判断，注意这条要求：
-//
-//	**Redis 出错时必须返回 false**，而不是 true。
-//	因为 true 的含义是"别查数据库了，这个码不存在"——把一次 Redis 故障
-//	翻译成"所有短码都不存在"，是在故障期间把所有用户挡在门外，
-//	而且这个错误的结论还会按 TTL 活过故障本身。返回 false 的代价只是多一次数据库查询。
-//
-// 验收：go test ./internal/service/ -run TestCacheServiceMissing
 func (cs *CacheService) IsMissing(ctx context.Context, shortCode string) bool {
-	return todo.Bool("CacheService.IsMissing")
+	n, err := cs.client.Exists(ctx, cs.missingKey(shortCode)).Result()
+	if err != nil {
+		// **Redis 出错时必须返回 false**，而不是 true。
+		// true 的含义是"别查数据库了，这个码不存在"——把一次 Redis 故障
+		// 翻译成"所有短码都不存在"，是在故障期间把所有用户挡在门外，
+		// 而且这个错误的结论还会按 TTL 活过故障本身。
+		return false
+	}
+	return n > 0
 }
 
 // 编译期保证：(已给) 这个断言把你实现的方法和接口绑在一起——
 // 只要你少实现一个方法，或者签名写错，编译就会在这里失败，而不是在调用处。
 var _ LinkCache = (*CacheService)(nil)
-
-// 这两个空引用是给你的实现准备的（encoding/json / fmt）：
-// 填空阶段它们还没有被使用，用它们保持编译通过。写完删掉。
-var (
-	_ = json.Marshal
-	_ = fmt.Sprintf
-)

@@ -30,7 +30,6 @@ import (
 	"kada-mvp/internal/infra"
 	"kada-mvp/internal/mq"
 	"kada-mvp/internal/service"
-	"kada-mvp/internal/todo"
 )
 
 // maxDeliveryAttempts 同一条消息最多被处理几次。
@@ -125,20 +124,28 @@ func decodeClickEvent(msg []byte) (mq.ClickEvent, error) {
 //
 // TODO(练习 89)：实现它。
 //
-//	1. e, err := decodeClickEvent(msg)；err != nil → 直接返回该错误（会被判为毒消息）。
-//	2. 给写入**加一个超时**：ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-//	   然后 defer cancel()。
-//	   为什么？因为这个函数的调用方（下面的循环）用的是不带超时的 ctx。
-//	   如果数据库卡住，没有超时的话这一条会永远挂着，消费组也就停在那里。
-//	3. return writer.WriteClick(ctx, e)
+//  1. e, err := decodeClickEvent(msg)；err != nil → 直接返回该错误（会被判为毒消息）。
+//  2. 给写入**加一个超时**：ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+//     然后 defer cancel()。
+//     为什么？因为这个函数的调用方（下面的循环）用的是不带超时的 ctx。
+//     如果数据库卡住，没有超时的话这一条会永远挂着，消费组也就停在那里。
+//  3. return writer.WriteClick(ctx, e)
 //
 // 注意这里**故意不重试**：重试由外层循环控制（它才知道已经试了几次），
 // 在函数内部再套一层重试会让"最多三次"变成"最多九次"，而那个数字就没人能说清了。
 //
 // 验收：go test ./cmd/worker/ -run TestProcessClickMessage
 func processClickMessage(msg []byte, writer service.ClickWriter) error {
-	_ = decodeClickEvent
-	return todo.Err("worker.processClickMessage")
+	e, err := decodeClickEvent(msg)
+	if err != nil {
+		return err
+	}
+
+	// 调用方的 ctx 没有超时；没有这一条，数据库卡住时这个消费者会永远挂着。
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	return writer.WriteClick(ctx, e)
 }
 
 func main() {

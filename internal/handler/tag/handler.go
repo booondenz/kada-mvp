@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/handler/httpx"
 	"kada-mvp/internal/middleware"
 )
 
@@ -40,7 +39,13 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup, authMW gin.HandlerFunc) {
 //
 // TODO(练习 81)：实现它。调服务 → 200 {"tags": tags}。
 func (h *Handler) List(c *gin.Context) {
-	httpx.NotImplemented(c, "tag.List")
+	tags, err := h.svc.List(c.Request.Context(), middleware.GetUserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"tags": tags})
 }
 
 // Create 新建标签。
@@ -50,19 +55,36 @@ func (h *Handler) List(c *gin.Context) {
 // 提示：绑定的错误文案用 "tag name is required"，
 // 因为 binding:"required" 失败时 Gin 给的英文信息对使用者没帮助。
 func (h *Handler) Create(c *gin.Context) {
-	httpx.NotImplemented(c, "tag.Create")
+	var req domain.CreateTagRequest
+	// Gin 在 binding:"required" 失败时给的英文信息对使用者没帮助，这里换成一句人话。
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "tag name is required"})
+		return
+	}
+
+	tag, err := h.svc.Create(c.Request.Context(), middleware.GetUserID(c), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"tag": tag})
 }
 
 // Delete 删除标签。
 //
 // TODO(练习 83)：实现它。解析 id（失败 400）→ 调服务（失败 404）→ 200 {"message": "tag deleted"}。
 func (h *Handler) Delete(c *gin.Context) {
-	httpx.NotImplemented(c, "tag.Delete")
-}
+	tagID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid tag ID"})
+		return
+	}
 
-// 这些 import 是给你的实现准备的；填空阶段还没有被使用，用空引用保持编译通过，写完删掉。
-var (
-	_ = http.StatusCreated
-	_ = strconv.ParseInt
-	_ = middleware.GetUserID
-)
+	if err := h.svc.Delete(c.Request.Context(), middleware.GetUserID(c), tagID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "tag deleted"})
+}

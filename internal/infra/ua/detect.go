@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/todo"
 )
 
 // Detect 判断这次请求来自哪个平台的内置浏览器。
@@ -28,8 +27,20 @@ import (
 //
 // 验收：go test ./internal/infra/ua/ -run TestDetect
 func Detect(userAgent string) domain.Platform {
-	_ = strings.ToLower // 提示：这一行只是为了让 strings 不被 import 报错，写的时候删掉
-	return domain.Platform(todo.String("ua.Detect"))
+	ua := strings.ToLower(userAgent)
+
+	switch {
+	case strings.Contains(ua, "micromessenger"):
+		return domain.PlatformWechat
+	case strings.Contains(ua, "qq/") || strings.Contains(ua, "mqqbrowser"):
+		return domain.PlatformQQ
+	case strings.Contains(ua, "weibo"):
+		return domain.PlatformWeibo
+	case strings.Contains(ua, "xhs") || strings.Contains(ua, "redapp"):
+		return domain.PlatformXiaohongshu
+	default:
+		return domain.PlatformBrowser
+	}
 }
 
 // crawlerMarkers 是"浏览器绝不会发送"的 token 列表：搜索引擎爬虫、链接预览抓取器、
@@ -69,7 +80,18 @@ var crawlerMarkers = []string{
 //
 // 验收：go test ./internal/infra/ua/ -run TestIsCrawler
 func IsCrawler(userAgent string) bool {
-	return todo.Bool("ua.IsCrawler")
+	// 空 UA 直接算爬虫：没有任何浏览器会不带 UA。
+	if userAgent == "" {
+		return true
+	}
+
+	ua := strings.ToLower(userAgent)
+	for _, marker := range crawlerMarkers {
+		if strings.Contains(ua, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // NeedsIntermediatePage 报告这个平台是否需要一张"中间页"而不是直接 302（已给）。

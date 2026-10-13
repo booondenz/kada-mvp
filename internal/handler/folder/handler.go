@@ -9,7 +9,6 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"kada-mvp/internal/domain"
-	"kada-mvp/internal/handler/httpx"
 	"kada-mvp/internal/middleware"
 )
 
@@ -44,7 +43,13 @@ func (h *Handler) RegisterRoutes(r *gin.RouterGroup, authMW gin.HandlerFunc) {
 // ⚠ 服务返回空切片而不是 nil，这里直接透传；如果你在服务层用了 append 到 nil 切片，
 // 记住那会序列化成 null，前端要把两种情况都处理一遍。
 func (h *Handler) List(c *gin.Context) {
-	httpx.NotImplemented(c, "folder.List")
+	folders, err := h.svc.List(c.Request.Context(), middleware.GetUserID(c))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"folders": folders})
 }
 
 // Create 新建文件夹。
@@ -52,7 +57,19 @@ func (h *Handler) List(c *gin.Context) {
 // TODO(练习 78)：实现它。绑定 domain.CreateFolderRequest（失败 → 400）
 // → 调服务 → 201 {"folder": folder}。
 func (h *Handler) Create(c *gin.Context) {
-	httpx.NotImplemented(c, "folder.Create")
+	var req domain.CreateFolderRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "folder name is required"})
+		return
+	}
+
+	folder, err := h.svc.Create(c.Request.Context(), middleware.GetUserID(c), req)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"folder": folder})
 }
 
 // Update 重命名文件夹。
@@ -62,19 +79,43 @@ func (h *Handler) Create(c *gin.Context) {
 //  2. 绑定 struct{ Name string `json:"name" binding:"required"` }（失败 → 400）。
 //  3. 调服务 → 200 {"folder": folder}；失败 → 404。
 func (h *Handler) Update(c *gin.Context) {
-	httpx.NotImplemented(c, "folder.Update")
+	folderID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid folder ID"})
+		return
+	}
+
+	var req struct {
+		Name string `json:"name" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request parameters"})
+		return
+	}
+
+	folder, err := h.svc.Update(c.Request.Context(), middleware.GetUserID(c), folderID, req.Name)
+	if err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"folder": folder})
 }
 
 // Delete 删除文件夹。
 //
 // TODO(练习 80)：实现它。解析 id（失败 400）→ 调服务（失败 404）→ 200 {"message": "folder deleted"}。
 func (h *Handler) Delete(c *gin.Context) {
-	httpx.NotImplemented(c, "folder.Delete")
-}
+	folderID, err := strconv.ParseInt(c.Param("id"), 10, 64)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid folder ID"})
+		return
+	}
 
-// 保持 import（写完删掉）。
-var (
-	_ = http.StatusCreated
-	_ = strconv.ParseInt
-	_ = middleware.GetUserID
-)
+	if err := h.svc.Delete(c.Request.Context(), middleware.GetUserID(c), folderID); err != nil {
+		c.JSON(http.StatusNotFound, gin.H{"error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "folder deleted"})
+}
